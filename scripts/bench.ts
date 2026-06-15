@@ -6,9 +6,7 @@ import jmespath from '../src/index';
 interface TimingStats {
   iterations: number;
   totalMs: number;
-  variance: number;
   sd: number;
-  p99: number;
   rme: number;
   opsPerSec: number;
   samples: number;
@@ -142,32 +140,23 @@ function getBenchmarkFns(): BenchmarkFn[] {
   ];
 }
 
-function percentile(sorted: number[], p: number): number {
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
-  return sorted[index] ?? 0;
-}
-
 function computeSampleStats(values: number[]): {
   mean: number;
-  variance: number;
   sd: number;
-  p99: number;
   rme: number;
 } {
   const n = values.length;
   if (n === 0) {
-    return { mean: 0, variance: 0, sd: 0, p99: 0, rme: 0 };
+    return { mean: 0, sd: 0, rme: 0 };
   }
 
   const mean = values.reduce((sum, value) => sum + value, 0) / n;
   const variance = n > 1 ? values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (n - 1) : 0;
   const sd = Math.sqrt(variance);
-  const sorted = [...values].sort((a, b) => a - b);
-  const p99 = percentile(sorted, 0.99);
   const sem = n > 0 ? sd / Math.sqrt(n) : 0;
   const rme = mean === 0 ? 0 : (sem / mean) * 100;
 
-  return { mean, variance, sd, p99, rme };
+  return { mean, sd, rme };
 }
 
 function measureTiming(
@@ -199,9 +188,7 @@ function measureTiming(
   return {
     iterations: timingIterations,
     totalMs: stats.mean,
-    variance: stats.variance,
     sd: stats.sd,
-    p99: stats.p99,
     rme: stats.rme,
     opsPerSec: timingIterations / (stats.mean / 1000),
     samples,
@@ -333,9 +320,7 @@ function printReport(report: BenchReport, label?: string) {
     Benchmark: name,
     [`Time (${iterLabel})`]: `${formatNumber(entry.timing.totalMs, 2)} ms`,
     'Ops/s': formatOps(entry.timing.opsPerSec),
-    Variance: `${formatNumber(entry.timing.variance, 2)} ms²`,
     SD: `${formatNumber(entry.timing.sd, 2)} ms`,
-    'P99 (ms)': formatNumber(entry.timing.p99, 2),
     '± RME': `${formatNumber(entry.timing.rme, 2)}%`,
     'Mem/op': entry.memory ? formatMemoryPerOp(entry.memory) : 'n/a',
     'Heap Δ': entry.memory ? formatBytes(entry.memory.heapDeltaBytes) : 'n/a',
@@ -368,15 +353,15 @@ function formatDelta(value: number): string {
 }
 
 function deltaClass(value: number, invert = false): 'neutral' | 'good' | 'good-strong' | 'bad' | 'bad-strong' {
-  if (!Number.isFinite(value) || Math.abs(value) < 0.5) {
+  if (!Number.isFinite(value) || Math.abs(value) < 7) {
     return 'neutral';
   }
   const effective = invert ? -value : value;
   const abs = Math.abs(value);
   if (effective > 0) {
-    return abs >= 15 ? 'good-strong' : 'good';
+    return abs >= 30 ? 'good-strong' : 'good';
   }
-  return abs >= 15 ? 'bad-strong' : 'bad';
+  return abs >= 30 ? 'bad-strong' : 'bad';
 }
 
 function printComparison(oldReport: BenchReport, newReport: BenchReport) {
@@ -395,14 +380,12 @@ function printComparison(oldReport: BenchReport, newReport: BenchReport) {
         Benchmark: name,
         'Time Δ': oldEntry ? 'removed' : 'added',
         'Ops/s Δ': oldEntry ? 'removed' : 'added',
-        'Variance Δ': oldEntry ? 'removed' : 'added',
         'Mem/op Δ': oldEntry ? 'removed' : 'added',
       };
     }
 
     const timeDelta = pctChange(oldEntry.timing.totalMs, newEntry.timing.totalMs);
     const opsDelta = pctChange(oldEntry.timing.opsPerSec, newEntry.timing.opsPerSec);
-    const varianceDelta = pctChange(oldEntry.timing.variance, newEntry.timing.variance);
     const memDelta =
       oldEntry.memory && newEntry.memory
         ? pctChange(oldEntry.memory.heapUsedPerOp, newEntry.memory.heapUsedPerOp)
@@ -412,7 +395,6 @@ function printComparison(oldReport: BenchReport, newReport: BenchReport) {
       Benchmark: name,
       'Time Δ': formatDelta(timeDelta),
       'Ops/s Δ': formatDelta(opsDelta),
-      'Variance Δ': formatDelta(varianceDelta),
       'Mem/op Δ': Number.isFinite(memDelta) ? formatDelta(memDelta) : 'n/a',
     };
   });
@@ -458,8 +440,6 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
         <td class="name">${escapeHtml(name)}</td>
         ${renderMetricCell(oldEntry?.timing.totalMs, entry.timing.totalMs, (v) => `${v.toFixed(2)} ms`, true)}
         ${renderMetricCell(oldEntry?.timing.opsPerSec, entry.timing.opsPerSec, (v) => `${formatOps(v)}/s`)}
-        ${renderMetricCell(oldEntry?.timing.variance, entry.timing.variance, (v) => `${v.toFixed(2)} ms²`, true)}
-        ${renderMetricCell(oldEntry?.timing.p99, entry.timing.p99, (v) => `${v.toFixed(2)} ms`, true)}
         ${renderMetricCell(oldEntry?.memory?.heapUsedPerOp, entry.memory?.heapUsedPerOp, (v) => `${v.toFixed(2)} B/op`, true)}
       </tr>`;
     })
@@ -561,8 +541,6 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
             <th>Benchmark</th>
             <th>Time (${iterLabel})</th>
             <th>Throughput</th>
-            <th>Variance</th>
-            <th>P99</th>
             <th>Memory / op</th>
           </tr>
         </thead>

@@ -1,4 +1,4 @@
-import type { ExpressionNode } from './AST.type';
+import { ExpressionNode, Ref } from './AST.type';
 import type {
   JSONArray,
   JSONArrayArray,
@@ -6,10 +6,8 @@ import type {
   JSONArrayObject,
   JSONObject,
   JSONValue,
-  ObjectDict,
 } from './JSON.type';
 import type { TreeInterpreter } from './TreeInterpreter';
-import { ScopeChain } from './Scope';
 import {
   findFirst,
   findLast,
@@ -46,7 +44,7 @@ export interface InputSignature {
   optional?: boolean;
 }
 
-export type RuntimeFunction<T extends ReadonlyArray<JSONValue | ExpressionNode>, U> = (resolvedArgs: T) => U;
+export type RuntimeFunction<T extends ReadonlyArray<JSONValue | Ref>, U> = (resolvedArgs: T) => U;
 
 export interface FunctionSignature {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -127,7 +125,7 @@ export interface FunctionRegistry {
    */
   register<T extends string>(
     name: T extends BuiltInFunctionNames ? never : T,
-    func: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+    func: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
     signature: InputSignature[],
     options?: RegisterOptions,
   ): RegistrationResult;
@@ -178,7 +176,6 @@ export class Runtime implements FunctionRegistry {
   _interpreter: TreeInterpreter;
   _functionTable: FunctionTable;
   private _customFunctions: Set<string> = new Set();
-  private _callScope = new ScopeChain();
   TYPE_NAME_TABLE = Object.freeze({
     [InputArgument.TYPE_NUMBER]: 'number',
     [InputArgument.TYPE_ANY]: 'any',
@@ -357,7 +354,7 @@ export class Runtime implements FunctionRegistry {
    */
   registerFunction(
     name: string,
-    customFunction: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+    customFunction: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
     signature: InputSignature[],
     options?: RegisterOptions,
   ): void {
@@ -374,7 +371,7 @@ export class Runtime implements FunctionRegistry {
    */
   private _registerInternal(
     name: string,
-    customFunction: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+    customFunction: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
     signature: InputSignature[],
     options: RegisterOptions = {},
   ): RegistrationResult {
@@ -435,7 +432,7 @@ export class Runtime implements FunctionRegistry {
    */
   register<T extends string>(
     name: T extends BuiltInFunctionNames ? never : T,
-    customFunction: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+    customFunction: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
     signature: InputSignature[],
     options: RegisterOptions = {},
   ): RegistrationResult {
@@ -486,23 +483,17 @@ export class Runtime implements FunctionRegistry {
     this._customFunctions.clear();
   }
 
-  callFunction(name: string, resolvedArgs: (JSONValue | ExpressionNode)[], scope: ScopeChain = new ScopeChain()): JSONValue {
+  callFunction(name: string, resolvedArgs: (JSONValue | ExpressionNode)[]): JSONValue {
     const functionEntry = this._functionTable[name];
     if (functionEntry === undefined) {
       throw new Error(`Unknown function: ${name}()`);
     }
     this.validateArgs(name, resolvedArgs, functionEntry._signature);
-    const previousScope = this._callScope;
-    this._callScope = scope;
-    try {
-      return functionEntry._func.call(this, resolvedArgs);
-    } finally {
-      this._callScope = previousScope;
-    }
+    return functionEntry._func.call(this, resolvedArgs);
   }
 
-  private evaluateExpref(exprefNode: ExpressionNode, value: JSONValue): JSONValue {
-    return exprefNode.eval(value, this._callScope, this) as JSONValue;
+  private evaluateExpref(exprefNode: Ref, value: JSONValue): JSONValue {
+    return exprefNode.exp.eval(value, exprefNode.scope, this) as JSONValue;
   }
 
   private validateInputSignatures(name: string, signature: InputSignature[]): void {
@@ -615,7 +606,7 @@ export class Runtime implements FunctionRegistry {
       return InputArgument.TYPE_ARRAY;
     }
     if (typeof obj === 'object') {
-      if ((obj as ObjectDict).expref === true) {
+      if (obj instanceof Ref) {
         return InputArgument.TYPE_EXPREF;
       }
       return InputArgument.TYPE_OBJECT;
@@ -623,7 +614,7 @@ export class Runtime implements FunctionRegistry {
     return;
   }
 
-  createKeyFunction(exprefNode: ExpressionNode, allowedTypes: InputArgument[]): (x: JSONValue) => JSONValue {
+  createKeyFunction(exprefNode: Ref, allowedTypes: InputArgument[]): (x: JSONValue) => JSONValue {
     const keyFunc = (x: JSONValue): JSONValue => {
       const current = this.evaluateExpref(exprefNode, x);
       if (!allowedTypes.includes(this.getTypeName(current) as InputArgument)) {
@@ -697,7 +688,7 @@ export class Runtime implements FunctionRegistry {
     return Object.fromEntries(array);
   };
 
-  private functionGroupBy: RuntimeFunction<[JSONArrayObject, ExpressionNode], JSONValue> = ([array, exprefNode]) => {
+  private functionGroupBy: RuntimeFunction<[JSONArrayObject, Ref], JSONValue> = ([array, exprefNode]) => {
     const keyFunction = this.createKeyFunction(exprefNode, [InputArgument.TYPE_STRING]);
     const groups: Record<string, JSONValue[]> = {};
     for (const item of array) {
@@ -729,7 +720,7 @@ export class Runtime implements FunctionRegistry {
     return Object.keys(inputValue).length;
   };
 
-  private functionMap: RuntimeFunction<[ExpressionNode, JSONArray], JSONArray> = ([exprefNode, elements]) => {
+  private functionMap: RuntimeFunction<[Ref, JSONArray], JSONArray> = ([exprefNode, elements]) => {
     const mapped: JSONValue[] = [];
     for (let i = 0; i < elements.length; i += 1) {
       mapped.push(this.evaluateExpref(exprefNode, elements[i]));
@@ -757,7 +748,7 @@ export class Runtime implements FunctionRegistry {
     return maxElement;
   };
 
-  private functionMaxBy: RuntimeFunction<[number[] | string[], ExpressionNode], JSONValue> = resolvedArgs => {
+  private functionMaxBy: RuntimeFunction<[number[] | string[], Ref], JSONValue> = resolvedArgs => {
     const exprefNode = resolvedArgs[1];
     const resolvedArray = resolvedArgs[0];
     const keyFunction = this.createKeyFunction(exprefNode, [InputArgument.TYPE_NUMBER, InputArgument.TYPE_STRING]);
@@ -803,7 +794,7 @@ export class Runtime implements FunctionRegistry {
     return minElement;
   };
 
-  private functionMinBy: RuntimeFunction<[number[] | string[], ExpressionNode], JSONValue> = resolvedArgs => {
+  private functionMinBy: RuntimeFunction<[number[] | string[], Ref], JSONValue> = resolvedArgs => {
     const exprefNode = resolvedArgs[1];
     const resolvedArray = resolvedArgs[0];
     const keyFunction = this.createKeyFunction(exprefNode, [InputArgument.TYPE_NUMBER, InputArgument.TYPE_STRING]);
@@ -876,7 +867,7 @@ export class Runtime implements FunctionRegistry {
     return [...inputValue].sort();
   };
 
-  private functionSortBy: RuntimeFunction<[number[] | string[], ExpressionNode], JSONValue> = resolvedArgs => {
+  private functionSortBy: RuntimeFunction<[number[] | string[], Ref], JSONValue> = resolvedArgs => {
     const sortedArray = [...resolvedArgs[0]];
     if (sortedArray.length === 0) {
       return sortedArray;

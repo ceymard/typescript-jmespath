@@ -1,6 +1,5 @@
 import { type JSONArray, type JSONObject, JSONValue } from './JSON.type';
 import { Token } from './Lexer.type';
-import { type ScopeChain } from './Scope';
 import { type Runtime } from './Runtime';
 import {
   add,
@@ -14,10 +13,12 @@ import {
   sub,
 } from './utils';
 
-type EvalResult = JSONValue | ExpressionNode;
+import { Scope } from './Scope';
+
+type EvalResult = JSONValue | Ref;
 
 export interface Node {
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): EvalResult;
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): EvalResult;
 }
 
 export class FieldNode implements Node {
@@ -28,7 +29,7 @@ export class FieldNode implements Node {
     return 'Field' as const;
   }
 
-  eval(value: JSONValue, _scope: ScopeChain, _runtime: Runtime): JSONValue {
+  eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       return null;
     }
@@ -44,7 +45,7 @@ export class LiteralNode implements Node {
     return 'Literal' as const;
   }
 
-  eval(_value: JSONValue, _scope: ScopeChain, _runtime: Runtime): JSONValue {
+  eval(_value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
     return this.value;
   }
 }
@@ -57,7 +58,7 @@ export class IndexNode implements Node {
     return 'Index' as const;
   }
 
-  eval(value: JSONValue, _scope: ScopeChain, _runtime: Runtime): JSONValue {
+  eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
     if (!Array.isArray(value)) {
       return null;
     }
@@ -78,7 +79,7 @@ export class SliceNode implements Node {
     return 'Slice' as const;
   }
 
-  eval(value: JSONValue, _scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, _scope: Scope, runtime: Runtime): JSONValue {
     if (!Array.isArray(value) && typeof value !== 'string') {
       return null;
     }
@@ -107,7 +108,7 @@ export class ComparatorNode implements Node {
     return 'Comparator' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const first = this.left.eval(value, scope, runtime);
     const second = this.right.eval(value, scope, runtime);
 
@@ -155,7 +156,7 @@ export class MultiSelectHashNode implements Node {
     return 'MultiSelectHash' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const collected: Record<string, JSONValue> = {};
     for (const child of this.children) {
       collected[child.name] = child.value.eval(value, scope, runtime) as JSONValue;
@@ -172,7 +173,7 @@ export class MultiSelectListNode implements Node {
     return 'MultiSelectList' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const collected: JSONValue[] = [];
     for (const child of this.children) {
       collected.push(child.eval(value, scope, runtime) as JSONValue);
@@ -192,12 +193,12 @@ export class FunctionNode implements Node {
     return 'Function' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const args: JSONValue[] = [];
     for (const child of this.children) {
       args.push(child.eval(value, scope, runtime) as JSONValue);
     }
-    return runtime.callFunction(this.name, args, scope);
+    return runtime.callFunction(this.name, args);
   }
 }
 
@@ -212,13 +213,13 @@ export class LetExpressionNode implements Node {
     return 'LetExpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
-    let letScope: JSONObject = {};
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
+    let letScope = new Scope(scope);
     for (const binding of this.bindings) {
-      const reference = binding.eval(value, scope, runtime) as JSONObject;
-      letScope = { ...letScope, ...reference };
+      const reference = binding.eval(value, scope, runtime) as JSONObject | Ref;
+      letScope.setValue(binding.variable, reference);
     }
-    return this.expression.eval(value, scope.withScope(letScope), runtime) as JSONValue;
+    return this.expression.eval(value, letScope, runtime) as JSONValue;
   }
 }
 
@@ -233,9 +234,9 @@ export class BindingNode implements Node {
     return 'Binding' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue | Ref {
     const result = this.reference.eval(value, scope, runtime);
-    return { [this.variable]: result } as JSONObject;
+    return result
   }
 }
 
@@ -247,11 +248,14 @@ export class VariableNode implements Node {
     return 'Variable' as const;
   }
 
-  eval(_value: JSONValue, scope: ScopeChain, _runtime: Runtime): JSONValue {
-    if (!scope.getValue(this.name) && !Object.hasOwn(scope.currentScopeData, this.name)) {
-      throw new Error(`Error referencing undefined variable ${this.name}`);
+  eval(_value: JSONValue, scope: Scope, _runtime: Runtime): JSONValue | Ref {
+    const value = scope.get(this.name);
+    if (value === undefined) {
+      const err = new Error(`Error referencing undefined variable ${this.name}`);
+      err.name = "undefined-variable";
+      throw err;
     }
-    return scope.getValue(this.name);
+    return value[0] ?? null;
   }
 }
 
@@ -267,7 +271,7 @@ export class TernaryNode implements Node {
     return 'Ternary' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const condition = this.condition.eval(value, scope, runtime);
     if (!isFalse(condition)) {
       return this.trueExpr.eval(value, scope, runtime) as JSONValue;
@@ -282,7 +286,7 @@ export class IdentityNode implements Node {
     return 'Identity' as const;
   }
 
-  eval(value: JSONValue, _scope: ScopeChain, _runtime: Runtime): JSONValue {
+  eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
     return value;
   }
 }
@@ -295,7 +299,7 @@ export class CurrentNode implements Node {
     return Token.TOK_CURRENT;
   }
 
-  eval(value: JSONValue, _scope: ScopeChain, _runtime: Runtime): JSONValue {
+  eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
     return value;
   }
 }
@@ -306,7 +310,7 @@ export class RootNode implements Node {
     return Token.TOK_ROOT;
   }
 
-  eval(_value: JSONValue, _scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(_value: JSONValue, _scope: Scope, runtime: Runtime): JSONValue {
     return runtime._interpreter.rootValue;
   }
 }
@@ -319,7 +323,7 @@ export class NotExpressionNode implements Node {
     return 'NotExpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     return isFalse(this.child.eval(value, scope, runtime));
   }
 }
@@ -332,7 +336,7 @@ export class FlattenNode implements Node {
     return 'Flatten' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const original = this.child.eval(value, scope, runtime);
     return Array.isArray(original) ? original.flat() : null;
   }
@@ -351,7 +355,7 @@ export class UnaryArithmeticNode implements Node {
     return 'Unary' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const operand = this.operand.eval(value, scope, runtime) as JSONValue;
     switch (this.operator) {
       case Token.TOK_PLUS:
@@ -376,9 +380,13 @@ export class ExpressionReferenceNode implements Node {
     return 'ExpressionReference' as const;
   }
 
-  eval(_value: JSONValue, _scope: ScopeChain, _runtime: Runtime): ExpressionNode {
-    return this.child
+  eval(_value: JSONValue, _scope: Scope, _runtime: Runtime): Ref {
+    return new Ref(this.child, _scope);
   }
+}
+
+export class Ref {
+  constructor(public readonly exp: ExpressionNode, public readonly scope: Scope) {}
 }
 
 export class IndexExpressionNode implements Node {
@@ -392,7 +400,7 @@ export class IndexExpressionNode implements Node {
     return 'IndexExpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const leftValue = this.left.eval(value, scope, runtime) as JSONValue;
     return this.right.eval(leftValue, scope, runtime) as JSONValue;
   }
@@ -409,7 +417,7 @@ export class SubexpressionNode implements Node {
     return 'Subexpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const result = this.left.eval(value, scope, runtime);
     return result != null ? ((this.right.eval(result as JSONValue, scope, runtime) ?? null) as JSONValue) : null;
   }
@@ -426,7 +434,7 @@ export class ProjectionNode implements Node {
     return 'Projection' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     let allowString = false;
     if (this.left instanceof IndexExpressionNode && this.left.right instanceof SliceNode) {
       allowString = true;
@@ -462,7 +470,7 @@ export class ValueProjectionNode implements Node {
     return 'ValueProjection' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const base = this.left.eval(value, scope, runtime);
     if (base === null || typeof base !== 'object' || Array.isArray(base)) {
       return null;
@@ -491,7 +499,7 @@ export class FilterProjectionNode implements Node {
     return 'FilterProjection' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const base = this.left.eval(value, scope, runtime);
     if (!Array.isArray(base)) {
       return null;
@@ -523,7 +531,7 @@ export class PipeNode implements Node {
     return 'Pipe' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const leftValue = this.left.eval(value, scope, runtime) as JSONValue;
     return this.right.eval(leftValue, scope, runtime) as JSONValue;
   }
@@ -540,7 +548,7 @@ export class OrExpressionNode implements Node {
     return 'OrExpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const result = this.left.eval(value, scope, runtime);
     if (isFalse(result)) {
       return this.right.eval(value, scope, runtime) as JSONValue;
@@ -560,7 +568,7 @@ export class AndExpressionNode implements Node {
     return 'AndExpression' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const result = this.left.eval(value, scope, runtime);
     if (isFalse(result)) {
       return result as JSONValue;
@@ -583,7 +591,7 @@ export class BinaryArithmeticNode implements Node {
     return 'Arithmetic' as const;
   }
 
-  eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const first = this.left.eval(value, scope, runtime) as JSONValue;
     const second = this.right.eval(value, scope, runtime) as JSONValue;
     switch (this.operator) {
@@ -641,41 +649,3 @@ export type ExpressionNode =
   | BindingNode
   | VariableNode
   | TernaryNode;
-
-for (const kls of [
-  IdentityNode,
-  CurrentNode,
-  RootNode,
-  NotExpressionNode,
-  FlattenNode,
-  UnaryArithmeticNode,
-  ExpressionReferenceNode,
-  IndexExpressionNode,
-  SubexpressionNode,
-  ProjectionNode,
-  ValueProjectionNode,
-  FilterProjectionNode,
-  PipeNode,
-  OrExpressionNode,
-  AndExpressionNode,
-  BinaryArithmeticNode,
-  ComparatorNode,
-  SliceNode,
-  IndexNode,
-  LiteralNode,
-  FieldNode,
-  MultiSelectHashNode,
-  MultiSelectListNode,
-  FunctionNode,
-  LetExpressionNode,
-  BindingNode,
-  VariableNode,
-  TernaryNode,
-]) {
-  Object.defineProperty(kls.prototype, 'expref', {
-    value: true,
-    writable: false,
-    enumerable: false,
-    configurable: false,
-  });
-}

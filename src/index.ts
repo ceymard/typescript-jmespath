@@ -1,4 +1,4 @@
-import { ExpressionNode } from './AST.type';
+import { ExpressionNode, Ref } from './AST.type';
 import { JSONValue } from './JSON.type';
 import Lexer from './Lexer';
 import { LexerOptions, LexerToken } from './Lexer.type';
@@ -12,7 +12,7 @@ import {
   RegistrationResult,
   RuntimeFunction,
 } from './Runtime';
-import { ScopeChain } from './Scope';
+import { Scope } from './Scope';
 import TreeInterpreterInst from './TreeInterpreter';
 
 export type { JSONArray, JSONObject, JSONPrimitive, JSONValue } from './JSON.type';
@@ -52,7 +52,7 @@ function tokenize(expression: string, options?: LexerOptions): LexerToken[] {
 // Enhanced registerFunction with backward compatibility
 const registerFunction = (
   functionName: string,
-  customFunction: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+  customFunction: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
   signature: InputSignature[],
   options?: RegisterOptions,
 ): void => {
@@ -62,7 +62,7 @@ const registerFunction = (
 // Enhanced registry functions with type safety
 const register = <T extends string>(
   name: T extends BuiltInFunctionNames ? never : T,
-  customFunction: RuntimeFunction<(JSONValue | ExpressionNode)[], JSONValue>,
+  customFunction: RuntimeFunction<(JSONValue | Ref)[], JSONValue>,
   signature: InputSignature[],
   options?: RegisterOptions,
 ): RegistrationResult => {
@@ -92,10 +92,6 @@ const clearCustomFunctions = (): void => {
 function search(data: JSONValue, expression: string, options?: Options): JSONValue {
   const nodeTree = Parser.parse(expression, options);
   return TreeInterpreterInst.search(nodeTree, data);
-}
-
-function Scope(): ScopeChain {
-  return new ScopeChain();
 }
 
 const TreeInterpreter = TreeInterpreterInst;

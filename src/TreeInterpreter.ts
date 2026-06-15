@@ -1,9 +1,7 @@
 import type { ExpressionNode, SliceNode } from './AST.type';
 import type { JSONArray, JSONValue } from './JSON.type';
 import { Runtime } from './Runtime';
-import { ScopeChain } from './Scope';
-
-const emptyScopeChain = new ScopeChain();
+import { Scope } from './Scope';
 
 export class TreeInterpreter {
   runtime: Runtime;
@@ -19,7 +17,7 @@ export class TreeInterpreter {
 
   search(node: ExpressionNode, value: JSONValue): JSONValue {
     this._rootValue = value;
-    return node.eval(value, emptyScopeChain, this.runtime) as JSONValue;
+    return node.eval(value, new Scope(), this.runtime) as JSONValue;
   }
 
   computeSliceParams(arrayLength: number, sliceNode: SliceNode): { start: number; stop: number; step: number } {
