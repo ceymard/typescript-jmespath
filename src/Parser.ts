@@ -472,10 +472,15 @@ class TokenParser {
         throw new Error(`Syntax error: expecting an identifier token, got: ${keyToken.type}`);
       }
       keyName = keyToken.value as string;
+      const look = this.lookaheadToken(1);
       this.advance();
-      this.match(Token.TOK_COLON);
-      value = this.expression(0);
-      pairs.push(new KeyValuePairNode(keyName, value));
+      if (look.type !== Token.TOK_COLON) {
+        pairs.push(new KeyValuePairNode(keyName, new FieldNode(keyName)));
+      } else {
+        this.match(Token.TOK_COLON);
+        value = this.expression(0);
+        pairs.push(new KeyValuePairNode(keyName, value));
+      }
       if (this.lookahead(0) === Token.TOK_COMMA) {
         this.match(Token.TOK_COMMA);
       } else if (this.lookahead(0) === Token.TOK_RBRACE) {
@@ -486,6 +491,5 @@ class TokenParser {
     return new MultiSelectHashNode(pairs);
   }
 }
-
 export const Parser = new TokenParser();
 export default Parser;
