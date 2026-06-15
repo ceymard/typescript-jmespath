@@ -42,10 +42,10 @@ interface BenchmarkFn {
   fn: () => void;
 }
 
-const DEFAULT_WARMUP_ITERATIONS = 1000;
-const DEFAULT_TIMING_ITERATIONS = 10_000;
+const DEFAULT_WARMUP_ITERATIONS = 10_000;
+const DEFAULT_TIMING_ITERATIONS = 1_000;
 const TIMING_SAMPLES = 25;
-const MEMORY_WARMUP = 1000;
+const MEMORY_WARMUP = 10_000;
 const MEMORY_ITERATIONS = 10_000;
 
 function parseCli() {
@@ -84,7 +84,8 @@ function getBenchmarkFns(): BenchmarkFn[] {
   const arrayData = {
     items: Array.from({ length: 100 }, (_, i) => ({ id: i, name: `item${i}`, price: i * 10 })),
   };
-  const nestedData = { level1: { level2: { level3: { level4: { value: 42 } } } } };
+  // const nestedData = { level1: { level2: { level3: { level4: { value: 42 } } } } };
+  const nestedDataArray = Array.from({ length: 1000 }, (_, i) => ({ level1: { level2: { level3: { level4: { value: i } } } } }));
   const arrayDataLarge = {
     items: Array.from({ length: 1000 }, (_, i) => ({
       id: i,
@@ -120,7 +121,7 @@ function getBenchmarkFns(): BenchmarkFn[] {
     { name: 'Eval#array_projection', fn: () => jmespath.search(arrayData, 'items[*].name') },
     { name: 'Eval#filter_projection', fn: () => jmespath.search(arrayData, 'items[?price > `500`].name') },
     { name: 'Eval#function_call', fn: () => jmespath.search(arrayData, 'length(items)') },
-    { name: 'Eval#nested_access', fn: () => jmespath.search(nestedData, 'level1.level2.level3.level4.value') },
+    { name: 'Eval#nested_access', fn: () => jmespath.search(nestedDataArray, '[*].level1.level2.level3.level4.value') },
     { name: 'Eval#slice_operation', fn: () => jmespath.search(arrayData, 'items[10:20]') },
     { name: 'Runtime#length_function', fn: () => jmespath.search(arrayData, 'length(items)') },
     { name: 'Runtime#max_function', fn: () => jmespath.search(arrayData, 'max(items[*].price)') },

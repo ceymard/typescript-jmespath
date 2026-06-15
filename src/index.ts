@@ -24,7 +24,7 @@ export type {
   InputSignature,
   RegisterOptions,
   RegistrationResult,
-  RuntimeFunction,
+  RuntimeFunction
 } from './Runtime';
 
 const TYPE_ANY = InputArgument.TYPE_ANY;
@@ -91,7 +91,8 @@ const clearCustomFunctions = (): void => {
 
 function search(data: JSONValue, expression: string, options?: Options): JSONValue {
   const nodeTree = Parser.parse(expression, options);
-  return TreeInterpreterInst.search(nodeTree, data);
+  const result = TreeInterpreterInst.search(nodeTree, data);
+  return result;
 }
 
 const TreeInterpreter = TreeInterpreterInst;

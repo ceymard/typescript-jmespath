@@ -1,11 +1,12 @@
-import { ExpressionNode, Ref } from './AST.type';
-import type {
-  JSONArray,
-  JSONArrayArray,
-  JSONArrayKeyValuePairs,
-  JSONArrayObject,
-  JSONObject,
-  JSONValue,
+import { Ref } from './AST.type';
+import {
+  isIterable,
+  type JSONArray,
+  type JSONArrayArray,
+  type JSONArrayKeyValuePairs,
+  type JSONArrayObject,
+  type JSONObject,
+  type JSONValue,
 } from './JSON.type';
 import type { TreeInterpreter } from './TreeInterpreter';
 import {
@@ -194,6 +195,13 @@ export class Runtime implements FunctionRegistry {
   constructor(interpreter: TreeInterpreter) {
     this._interpreter = interpreter;
     this._functionTable = this.buildFunctionTable();
+  }
+
+  unwrapIterable(value: JSONValue | Ref): JSONValue {
+    if (isIterable(value) && !Array.isArray(value)) {
+      return Array.from(value);
+    }
+    return value as JSONValue;
   }
 
   private buildFunctionTable(): FunctionTable {
@@ -483,7 +491,7 @@ export class Runtime implements FunctionRegistry {
     this._customFunctions.clear();
   }
 
-  callFunction(name: string, resolvedArgs: (JSONValue | ExpressionNode)[]): JSONValue {
+  callFunction(name: string, resolvedArgs: (JSONValue | Ref)[]): JSONValue {
     const functionEntry = this._functionTable[name];
     if (functionEntry === undefined) {
       throw new Error(`Unknown function: ${name}()`);
@@ -493,7 +501,7 @@ export class Runtime implements FunctionRegistry {
   }
 
   private evaluateExpref(exprefNode: Ref, value: JSONValue): JSONValue {
-    return exprefNode.exp.eval(value, exprefNode.scope, this) as JSONValue;
+    return this.unwrapIterable(exprefNode.exp.eval(value, exprefNode.scope, this) as JSONValue);
   }
 
   private validateInputSignatures(name: string, signature: InputSignature[]): void {
@@ -504,13 +512,13 @@ export class Runtime implements FunctionRegistry {
     }
   }
 
-  private validateArgs(name: string, args: (JSONValue | ExpressionNode)[], signature: InputSignature[]): void {
+  private validateArgs(name: string, args: (JSONValue | Ref)[], signature: InputSignature[]): void {
     this.validateInputSignatures(name, signature);
     this.validateArity(name, args, signature);
     this.validateTypes(name, args, signature);
   }
 
-  private validateArity(name: string, args: (JSONValue | ExpressionNode)[], signature: InputSignature[]): void {
+  private validateArity(name: string, args: (JSONValue | Ref)[], signature: InputSignature[]): void {
     const numberOfRequiredArgs = signature.filter(argSignature => !(argSignature.optional ?? false)).length;
     const lastArgIsVariadic = signature[signature.length - 1]?.variadic ?? false;
     const tooFewArgs = args.length < numberOfRequiredArgs;
@@ -528,7 +536,7 @@ export class Runtime implements FunctionRegistry {
     }
   }
 
-  private validateTypes(name: string, args: (JSONValue | ExpressionNode)[], signature: InputSignature[]): void {
+  private validateTypes(name: string, args: (JSONValue | Ref)[], signature: InputSignature[]): void {
     for (let i = 0; i < signature.length; i += 1) {
       const currentSpec = signature[i].types;
       const actualType = this.getTypeName(args[i]) as InputArgument;
@@ -589,7 +597,7 @@ export class Runtime implements FunctionRegistry {
     }
     return false;
   }
-  private getTypeName(obj: JSONValue | ExpressionNode): InputArgument | undefined {
+  private getTypeName(obj: JSONValue | Ref): InputArgument | undefined {
     if (obj === null) {
       return InputArgument.TYPE_NULL;
     }

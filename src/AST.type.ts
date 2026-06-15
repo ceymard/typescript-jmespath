@@ -1,4 +1,4 @@
-import { type JSONArray, type JSONObject, JSONValue } from './JSON.type';
+import { isIterable, type JSONObject, JSONValue } from './JSON.type';
 import { Token } from './Lexer.type';
 import { type Runtime } from './Runtime';
 import {
@@ -59,12 +59,86 @@ export class IndexNode implements Node {
   }
 
   eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
-    if (!Array.isArray(value)) {
+    if (!isIterable(value)) {
       return null;
     }
-    const index = this.value < 0 ? value.length + this.value : this.value;
-    return value[index] ?? null;
+    if (this.value < 0 && !Array.isArray(value)) {
+      // No way around it...
+      value = Array.from(value);
+    }
+    if (Array.isArray(value)) {
+      const index = this.value < 0 ? value.length + this.value : this.value;
+      return value[index] ?? null;
+    }
+
+    let index = 0;
+    for (const item of value) {
+      if (index === this.value) {
+        return item;
+      }
+      index++;
+    }
+    return null;
   }
+}
+
+function sliceIndices(
+  length: number,
+  start: number | null,
+  stop: number | null,
+  step: number | null,
+): [number, number, number] {
+  let stride = step ?? 1;
+  if (stride === 0) {
+    const err = new Error('Invalid value: slice step cannot be 0');
+    err.name = 'RuntimeError';
+    throw err;
+  }
+
+  let lower = start;
+  let upper = stop;
+
+  if (lower === null) {
+    lower = stride < 0 ? length - 1 : 0;
+  } else {
+    if (lower < 0) {
+      lower += length;
+    }
+    if (lower < 0) {
+      lower = stride < 0 ? -1 : 0;
+    } else if (lower >= length) {
+      lower = stride < 0 ? length - 1 : length;
+    }
+  }
+
+  if (upper === null) {
+    upper = stride < 0 ? -1 : length;
+  } else {
+    if (upper < 0) {
+      upper += length;
+    }
+    if (upper < 0) {
+      upper = stride < 0 ? -1 : 0;
+    } else if (upper >= length) {
+      upper = stride < 0 ? length - 1 : length;
+    }
+  }
+
+  return [lower, upper, stride];
+}
+
+function sliceCollection<T>(collection: ArrayLike<T>, start: number, stop: number, step: number, runtime: Runtime): JSONValue[] {
+  const result: JSONValue[] = [];
+  if (step > 0) {
+    for (let i = start; i < stop; i += step) {
+      result.push(runtime.unwrapIterable(collection[i] as JSONValue));
+    }
+  } else {
+    for (let i = start; i > stop; i += step) {
+      result.push(runtime.unwrapIterable(collection[i] as JSONValue));
+    }
+  }
+  return result;
 }
 
 export class SliceNode implements Node {
@@ -80,17 +154,55 @@ export class SliceNode implements Node {
   }
 
   eval(value: JSONValue, _scope: Scope, runtime: Runtime): JSONValue {
-    if (!Array.isArray(value) && typeof value !== 'string') {
+    if (!isIterable(value) && typeof value !== 'string') {
       return null;
     }
-    const interpreter = runtime._interpreter;
-    const { start, stop, step } = interpreter.computeSliceParams(value.length, this);
-    if (typeof value === 'string') {
-      const chars = [...value];
-      const sliced = interpreter.slice(chars, start, stop, step);
-      return sliced.join('');
+
+    if (isIterable(value) && !Array.isArray(value)
+    ) {
+      let start = this.start ?? 0;
+      let step = this.step ?? 1;
+      let stop = this.stop ?? Infinity;
+
+      if (start < stop && step > 0) {
+        return {
+          [Symbol.iterator]: () => {
+            let idx = 0
+            let it = value[Symbol.iterator]();
+            return {next: () => {
+              for (;;) {
+                let v = it.next();
+                if (v.done || idx >= stop) {
+                  return { done: true, value: undefined };
+                }
+                let i = idx
+                idx++
+                if (i > 0 && (step === 1 || (i - start) % step === 0)) {
+                  return { done: false, value: runtime.unwrapIterable(v.value) };
+                }
+              }
+            }}
+          }
+        }
+      }
     }
-    return interpreter.slice(value as JSONArray, start, stop, step);
+
+    const isString = typeof value === 'string';
+    const collection: ArrayLike<JSONValue> = isString
+      ? value
+      : Array.isArray(value)
+        ? value
+        : Array.from(value);
+
+    const [start, stop, step] = sliceIndices(
+      collection.length,
+      this.start,
+      this.stop,
+      this.step,
+    );
+    const sliced = sliceCollection(collection, start, stop, step, runtime);
+
+    return isString ? (sliced as string[]).join('') : sliced;
   }
 }
 
@@ -159,7 +271,7 @@ export class MultiSelectHashNode implements Node {
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const collected: Record<string, JSONValue> = {};
     for (const child of this.children) {
-      collected[child.name] = child.value.eval(value, scope, runtime) as JSONValue;
+      collected[child.name] = runtime.unwrapIterable(child.value.eval(value, scope, runtime) as JSONValue);
     }
     return collected;
   }
@@ -176,8 +288,9 @@ export class MultiSelectListNode implements Node {
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const collected: JSONValue[] = [];
     for (const child of this.children) {
-      collected.push(child.eval(value, scope, runtime) as JSONValue);
+      collected.push(runtime.unwrapIterable(child.eval(value, scope, runtime) as JSONValue));
     }
+
     return collected;
   }
 }
@@ -194,9 +307,9 @@ export class FunctionNode implements Node {
   }
 
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
-    const args: JSONValue[] = [];
+    const args: (JSONValue | Ref)[] = [];
     for (const child of this.children) {
-      args.push(child.eval(value, scope, runtime) as JSONValue);
+      args.push(runtime.unwrapIterable(child.eval(value, scope, runtime)));
     }
     return runtime.callFunction(this.name, args);
   }
@@ -338,7 +451,39 @@ export class FlattenNode implements Node {
 
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const original = this.child.eval(value, scope, runtime);
-    return Array.isArray(original) ? original.flat() : null;
+    if (!isIterable(original)) {
+      return null;
+    }
+
+    return {
+      [Symbol.iterator]: () => {
+        let it = original[Symbol.iterator]();
+        let current: Iterator<JSONValue> | null = null;
+        return {next: () => {
+          for (;;) {
+            if (current != null) {
+              let v = current.next();
+              if (v.done) {
+                current = null;
+                continue;
+              }
+              return { done: false, value: v.value };
+            }
+
+            let v = it.next();
+            if (v.done) {
+              return { done: true, value: undefined };
+            }
+
+            if (isIterable(v.value)) {
+              current = v.value[Symbol.iterator]();
+              continue;
+            }
+            return { done: false, value: v.value };
+          }
+        }}
+      }
+    };
   }
 }
 
@@ -445,17 +590,30 @@ export class ProjectionNode implements Node {
       return this.right.eval(base, scope, runtime) as JSONValue;
     }
 
-    if (!Array.isArray(base)) {
+    if (!isIterable(base)) {
       return null;
     }
-    const collected: JSONValue[] = [];
-    for (const elem of base) {
-      const current = this.right.eval(elem, scope, runtime) as JSONValue;
-      if (current !== null) {
-        collected.push(current);
+
+    return {
+      [Symbol.iterator]: () => {
+        let it = base[Symbol.iterator]();
+        return {next: () => {
+          for (;;) {
+            let v = it.next();
+            if (v.done) {
+              return { done: true, value: undefined };
+            }
+            const res = this.right.eval(v.value, scope, runtime) as JSONValue
+            if (res !== null) {
+              return {
+                done: false,
+                value: res,
+              }
+            }
+          }
+        }}
       }
     }
-    return collected as JSONValue;
   }
 }
 
@@ -470,20 +628,21 @@ export class ValueProjectionNode implements Node {
     return 'ValueProjection' as const;
   }
 
-  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
+  eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue | Ref {
     const base = this.left.eval(value, scope, runtime);
-    if (base === null || typeof base !== 'object' || Array.isArray(base)) {
+    if (base === null || typeof base !== 'object' || isIterable(base)) {
       return null;
     }
-    const collected: JSONValue[] = [];
+    const collected: (JSONValue | Ref)[] = [];
     const values = Object.values(base) as JSONValue[];
     for (const elem of values) {
       const current = this.right.eval(elem, scope, runtime) as JSONValue;
       if (current !== null) {
-        collected.push(current);
+        collected.push(runtime.unwrapIterable(current));
       }
     }
-    return collected;
+    // no need to return an iterable; Object.values() already returns an array
+    return collected as JSONValue;
   }
 }
 
@@ -501,22 +660,32 @@ export class FilterProjectionNode implements Node {
 
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
     const base = this.left.eval(value, scope, runtime);
-    if (!Array.isArray(base)) {
+    if (!isIterable(base)) {
       return null;
     }
 
-    const results: JSONValue[] = [];
-    for (const elem of base) {
-      const matched = this.condition.eval(elem, scope, runtime);
-      if (isFalse(matched)) {
-        continue;
-      }
-      const result = this.right.eval(elem, scope, runtime) as JSONValue;
-      if (result !== null) {
-        results.push(result);
+    // return results;
+    return {
+      [Symbol.iterator]: () => {
+        let it = base[Symbol.iterator]();
+        return {next: () => {
+          for (;;) {
+            let v = it.next();
+            if (v.done) {
+              return { done: true, value: undefined };
+            }
+            const matched = this.condition.eval(v.value, scope, runtime);
+            if (isFalse(matched)) {
+              continue;
+            }
+            const result = this.right.eval(v.value, scope, runtime) as JSONValue;
+            if (result !== null) {
+              return { done: false, value: result };
+            }
+          }
+        }}
       }
     }
-    return results;
   }
 }
 
@@ -532,7 +701,10 @@ export class PipeNode implements Node {
   }
 
   eval(value: JSONValue, scope: Scope, runtime: Runtime): JSONValue {
-    const leftValue = this.left.eval(value, scope, runtime) as JSONValue;
+    let leftValue = this.left.eval(value, scope, runtime) as JSONValue;
+    if (isIterable(leftValue)) {
+      leftValue = Array.from(leftValue) as ReadonlyArray<JSONValue>;
+    }
     return this.right.eval(leftValue, scope, runtime) as JSONValue;
   }
 }
