@@ -67,6 +67,7 @@
     "build": "tsup",
     "dev": "ts-node src/cli.ts",
     "perf": "node --expose-gc scripts/perf.cjs",
+    "memory-perf": "node --expose-gc scripts/memory-perf.cjs",
     "start": "tsup --watch",
     "test": "vitest --run",
     "test:watch": "vitest",
