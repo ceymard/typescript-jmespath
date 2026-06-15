@@ -9,6 +9,7 @@ import type {
   ObjectDict,
 } from './JSON.type';
 import type { TreeInterpreter } from './TreeInterpreter';
+import { ScopeChain } from './Scope';
 import {
   findFirst,
   findLast,
@@ -177,6 +178,7 @@ export class Runtime implements FunctionRegistry {
   _interpreter: TreeInterpreter;
   _functionTable: FunctionTable;
   private _customFunctions: Set<string> = new Set();
+  private _callScope = new ScopeChain();
   TYPE_NAME_TABLE = Object.freeze({
     [InputArgument.TYPE_NUMBER]: 'number',
     [InputArgument.TYPE_ANY]: 'any',
@@ -484,13 +486,23 @@ export class Runtime implements FunctionRegistry {
     this._customFunctions.clear();
   }
 
-  callFunction(name: string, resolvedArgs: (JSONValue | ExpressionNode)[]): JSONValue {
+  callFunction(name: string, resolvedArgs: (JSONValue | ExpressionNode)[], scope: ScopeChain = new ScopeChain()): JSONValue {
     const functionEntry = this._functionTable[name];
     if (functionEntry === undefined) {
       throw new Error(`Unknown function: ${name}()`);
     }
     this.validateArgs(name, resolvedArgs, functionEntry._signature);
-    return functionEntry._func.call(this, resolvedArgs);
+    const previousScope = this._callScope;
+    this._callScope = scope;
+    try {
+      return functionEntry._func.call(this, resolvedArgs);
+    } finally {
+      this._callScope = previousScope;
+    }
+  }
+
+  private evaluateExpref(exprefNode: ExpressionNode, value: JSONValue): JSONValue {
+    return exprefNode.eval(value, this._callScope, this) as JSONValue;
   }
 
   private validateInputSignatures(name: string, signature: InputSignature[]): void {
@@ -612,9 +624,8 @@ export class Runtime implements FunctionRegistry {
   }
 
   createKeyFunction(exprefNode: ExpressionNode, allowedTypes: InputArgument[]): (x: JSONValue) => JSONValue {
-    const interpreter = this._interpreter;
     const keyFunc = (x: JSONValue): JSONValue => {
-      const current = interpreter.visit(exprefNode, x) as JSONValue;
+      const current = this.evaluateExpref(exprefNode, x);
       if (!allowedTypes.includes(this.getTypeName(current) as InputArgument)) {
         const msg = `Invalid type: expected one of (${allowedTypes
           .map(t => this.TYPE_NAME_TABLE[t])
@@ -719,13 +730,9 @@ export class Runtime implements FunctionRegistry {
   };
 
   private functionMap: RuntimeFunction<[ExpressionNode, JSONArray], JSONArray> = ([exprefNode, elements]) => {
-    if (!this._interpreter) {
-      return [];
-    }
     const mapped: JSONValue[] = [];
-    const interpreter = this._interpreter;
     for (let i = 0; i < elements.length; i += 1) {
-      mapped.push(<JSONValue>interpreter.visit(exprefNode, elements[i]));
+      mapped.push(this.evaluateExpref(exprefNode, elements[i]));
     }
     return mapped;
   };
@@ -874,9 +881,8 @@ export class Runtime implements FunctionRegistry {
     if (sortedArray.length === 0) {
       return sortedArray;
     }
-    const interpreter = this._interpreter;
     const exprefNode = resolvedArgs[1];
-    const requiredType = this.getTypeName(interpreter.visit(exprefNode, sortedArray[0]) as JSONValue);
+    const requiredType = this.getTypeName(this.evaluateExpref(exprefNode, sortedArray[0]));
     if (requiredType !== undefined && ![InputArgument.TYPE_NUMBER, InputArgument.TYPE_STRING].includes(requiredType)) {
       throw new Error(`Invalid type: unexpected type (${this.TYPE_NAME_TABLE[requiredType]})`);
     }
@@ -889,8 +895,8 @@ export class Runtime implements FunctionRegistry {
     }
 
     return sortedArray.sort((a, b) => {
-      const exprA = interpreter.visit(exprefNode, a) as number | string;
-      const exprB = interpreter.visit(exprefNode, b) as number | string;
+      const exprA = this.evaluateExpref(exprefNode, a) as number | string;
+      const exprB = this.evaluateExpref(exprefNode, b) as number | string;
       if (this.getTypeName(exprA) !== requiredType) {
         throwInvalidTypeError(this, exprA);
       } else if (this.getTypeName(exprB) !== requiredType) {

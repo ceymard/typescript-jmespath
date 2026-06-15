@@ -188,7 +188,7 @@ export class FunctionNode implements Node {
     for (const child of this.children) {
       args.push(child.eval(value, scope, runtime) as JSONValue);
     }
-    return runtime.callFunction(this.name, args);
+    return runtime.callFunction(this.name, args, scope);
   }
 }
 
