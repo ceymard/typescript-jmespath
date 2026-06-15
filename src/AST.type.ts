@@ -607,7 +607,7 @@ export class ProjectionNode implements Node {
             if (res !== null) {
               return {
                 done: false,
-                value: res,
+                value: runtime.unwrapIterable(res),
               }
             }
           }
