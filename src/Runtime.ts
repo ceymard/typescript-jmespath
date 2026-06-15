@@ -615,7 +615,7 @@ export class Runtime implements FunctionRegistry {
       return InputArgument.TYPE_ARRAY;
     }
     if (typeof obj === 'object') {
-      if ((obj as ObjectDict).expref) {
+      if ((obj as ObjectDict).expref === true) {
         return InputArgument.TYPE_EXPREF;
       }
       return InputArgument.TYPE_OBJECT;

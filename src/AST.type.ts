@@ -14,13 +14,14 @@ import {
   sub,
 } from './utils';
 
-type EvalResult = JSONValue | ExpressionReference;
+type EvalResult = JSONValue | ExpressionNode;
 
 export interface Node {
   eval(value: JSONValue, scope: ScopeChain, runtime: Runtime): EvalResult;
 }
 
 export class FieldNode implements Node {
+
   constructor(public readonly name: string) {}
 
   get type() {
@@ -36,6 +37,7 @@ export class FieldNode implements Node {
 }
 
 export class LiteralNode implements Node {
+
   constructor(public readonly value: JSONValue) {}
 
   get type() {
@@ -48,6 +50,7 @@ export class LiteralNode implements Node {
 }
 
 export class IndexNode implements Node {
+
   constructor(public readonly value: number) {}
 
   get type() {
@@ -64,6 +67,7 @@ export class IndexNode implements Node {
 }
 
 export class SliceNode implements Node {
+
   constructor(
     public readonly start: number | null,
     public readonly stop: number | null,
@@ -92,6 +96,7 @@ export class SliceNode implements Node {
 export type ComparatorType = 'GT' | 'LT' | 'GTE' | 'LTE' | 'NE' | 'EQ';
 
 export class ComparatorNode implements Node {
+
   constructor(
     public readonly name: ComparatorType,
     public readonly left: ExpressionNode,
@@ -131,6 +136,7 @@ export class ComparatorNode implements Node {
 }
 
 export class KeyValuePairNode {
+
   constructor(
     public readonly name: string,
     public readonly value: ExpressionNode,
@@ -142,6 +148,7 @@ export class KeyValuePairNode {
 }
 
 export class MultiSelectHashNode implements Node {
+
   constructor(public readonly children: KeyValuePairNode[]) {}
 
   get type() {
@@ -158,6 +165,7 @@ export class MultiSelectHashNode implements Node {
 }
 
 export class MultiSelectListNode implements Node {
+
   constructor(public readonly children: ExpressionNode[]) {}
 
   get type() {
@@ -174,6 +182,7 @@ export class MultiSelectListNode implements Node {
 }
 
 export class FunctionNode implements Node {
+
   constructor(
     public readonly name: string,
     public readonly children: ExpressionNode[],
@@ -193,6 +202,7 @@ export class FunctionNode implements Node {
 }
 
 export class LetExpressionNode implements Node {
+
   constructor(
     public readonly bindings: BindingNode[],
     public readonly expression: ExpressionNode,
@@ -213,6 +223,7 @@ export class LetExpressionNode implements Node {
 }
 
 export class BindingNode implements Node {
+
   constructor(
     public readonly variable: string,
     public readonly reference: ExpressionNode,
@@ -229,6 +240,7 @@ export class BindingNode implements Node {
 }
 
 export class VariableNode implements Node {
+
   constructor(public readonly name: string) {}
 
   get type() {
@@ -244,6 +256,7 @@ export class VariableNode implements Node {
 }
 
 export class TernaryNode implements Node {
+
   constructor(
     public readonly condition: ExpressionNode,
     public readonly trueExpr: ExpressionNode,
@@ -264,6 +277,7 @@ export class TernaryNode implements Node {
 }
 
 export class IdentityNode implements Node {
+
   get type() {
     return 'Identity' as const;
   }
@@ -276,6 +290,7 @@ export class IdentityNode implements Node {
 export const IDENTITY = new IdentityNode();
 
 export class CurrentNode implements Node {
+
   get type() {
     return Token.TOK_CURRENT;
   }
@@ -286,6 +301,7 @@ export class CurrentNode implements Node {
 }
 
 export class RootNode implements Node {
+
   get type() {
     return Token.TOK_ROOT;
   }
@@ -296,6 +312,7 @@ export class RootNode implements Node {
 }
 
 export class NotExpressionNode implements Node {
+
   constructor(public readonly child: ExpressionNode) {}
 
   get type() {
@@ -308,6 +325,7 @@ export class NotExpressionNode implements Node {
 }
 
 export class FlattenNode implements Node {
+
   constructor(public readonly child: ExpressionNode) {}
 
   get type() {
@@ -323,6 +341,7 @@ export class FlattenNode implements Node {
 export type UnaryOperatorType = 'Plus' | 'Minus';
 
 export class UnaryArithmeticNode implements Node {
+
   constructor(
     public readonly operator: UnaryOperatorType,
     public readonly operand: ExpressionNode,
@@ -350,26 +369,20 @@ export class UnaryArithmeticNode implements Node {
 }
 
 export class ExpressionReferenceNode implements Node {
+
   constructor(public readonly child: ExpressionNode) {}
 
   get type() {
     return 'ExpressionReference' as const;
   }
 
-  eval(_value: JSONValue, _scope: ScopeChain, _runtime: Runtime): ExpressionReference {
-    const child = this.child;
-    return new Proxy(child, {
-      get(target, prop, receiver) {
-        if (prop === 'expref') {
-          return true;
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as ExpressionReference;
+  eval(_value: JSONValue, _scope: ScopeChain, _runtime: Runtime): ExpressionNode {
+    return this.child
   }
 }
 
 export class IndexExpressionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -386,6 +399,7 @@ export class IndexExpressionNode implements Node {
 }
 
 export class SubexpressionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -402,6 +416,7 @@ export class SubexpressionNode implements Node {
 }
 
 export class ProjectionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -437,6 +452,7 @@ export class ProjectionNode implements Node {
 }
 
 export class ValueProjectionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -464,6 +480,7 @@ export class ValueProjectionNode implements Node {
 }
 
 export class FilterProjectionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -496,6 +513,7 @@ export class FilterProjectionNode implements Node {
 }
 
 export class PipeNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -512,6 +530,7 @@ export class PipeNode implements Node {
 }
 
 export class OrExpressionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -531,6 +550,7 @@ export class OrExpressionNode implements Node {
 }
 
 export class AndExpressionNode implements Node {
+
   constructor(
     public readonly left: ExpressionNode,
     public readonly right: ExpressionNode,
@@ -552,6 +572,7 @@ export class AndExpressionNode implements Node {
 export type BinaryOperatorType = 'Plus' | 'Minus' | 'Multiply' | Token.TOK_STAR | 'Divide' | 'Modulo' | 'Div';
 
 export class BinaryArithmeticNode implements Node {
+
   constructor(
     public readonly operator: BinaryOperatorType,
     public readonly left: ExpressionNode,
@@ -621,4 +642,40 @@ export type ExpressionNode =
   | VariableNode
   | TernaryNode;
 
-export type ExpressionReference = { expref: true } & ExpressionNode;
+for (const kls of [
+  IdentityNode,
+  CurrentNode,
+  RootNode,
+  NotExpressionNode,
+  FlattenNode,
+  UnaryArithmeticNode,
+  ExpressionReferenceNode,
+  IndexExpressionNode,
+  SubexpressionNode,
+  ProjectionNode,
+  ValueProjectionNode,
+  FilterProjectionNode,
+  PipeNode,
+  OrExpressionNode,
+  AndExpressionNode,
+  BinaryArithmeticNode,
+  ComparatorNode,
+  SliceNode,
+  IndexNode,
+  LiteralNode,
+  FieldNode,
+  MultiSelectHashNode,
+  MultiSelectListNode,
+  FunctionNode,
+  LetExpressionNode,
+  BindingNode,
+  VariableNode,
+  TernaryNode,
+]) {
+  Object.defineProperty(kls.prototype, 'expref', {
+    value: true,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+}
