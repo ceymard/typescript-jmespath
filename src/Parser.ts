@@ -1,18 +1,35 @@
-import type {
-  BinaryArithmeticNode,
-  BinaryExpressionNode,
-  BinaryOperatorType,
+import {
+  AndExpressionNode,
   BindingNode,
+  BinaryArithmeticNode,
+  BinaryOperatorType,
   ComparatorNode,
   ComparatorType,
+  CurrentNode,
   ExpressionNode,
+  ExpressionReferenceNode,
+  FieldNode,
+  FilterProjectionNode,
+  FlattenNode,
   FunctionNode,
+  IDENTITY,
+  IndexExpressionNode,
   IndexNode,
   KeyValuePairNode,
   LetExpressionNode,
+  LiteralNode,
+  MultiSelectHashNode,
+  MultiSelectListNode,
+  NotExpressionNode,
+  OrExpressionNode,
+  PipeNode,
+  ProjectionNode,
+  RootNode,
   SliceNode,
+  SubexpressionNode,
+  TernaryNode,
   UnaryArithmeticNode,
-  UnaryExpressionNode,
+  ValueProjectionNode,
   VariableNode,
 } from './AST.type';
 import Lexer from './Lexer';
@@ -108,82 +125,66 @@ class TokenParser {
   nud(token: LexerToken): ExpressionNode {
     switch (token.type) {
       case Token.TOK_VARIABLE:
-        return { type: 'Variable', name: token.value as string };
+        return new VariableNode(token.value as string);
       case Token.TOK_LITERAL:
-        return { type: 'Literal', value: token.value };
+        return new LiteralNode(token.value);
       case Token.TOK_UNQUOTEDIDENTIFIER: {
         if (TokenParser.isKeyword(token, 'let') && this.lookahead(0) === Token.TOK_VARIABLE) {
           return this.parseLetExpression();
         } else {
-          return { type: 'Field', name: token.value as string };
+          return new FieldNode(token.value as string);
         }
       }
       case Token.TOK_QUOTEDIDENTIFIER:
         if (this.lookahead(0) === Token.TOK_LPAREN) {
           throw new Error('Syntax error: quoted identifier not allowed for function names.');
         } else {
-          return { type: 'Field', name: token.value as string };
+          return new FieldNode(token.value as string);
         }
       case Token.TOK_NOT: {
         const child = this.expression(bindingPower.Not);
-        return { type: 'NotExpression', child };
+        return new NotExpressionNode(child);
       }
       case Token.TOK_MINUS: {
         const child = this.expression(bindingPower.Minus);
-        return {
-          type: 'Unary',
-          operator: token.type,
-          operand: child,
-        } as UnaryArithmeticNode;
+        return new UnaryArithmeticNode(token.type, child);
       }
       case Token.TOK_PLUS: {
         const child = this.expression(bindingPower.Plus);
-        return {
-          type: 'Unary',
-          operator: token.type,
-          operand: child,
-        } as UnaryArithmeticNode;
+        return new UnaryArithmeticNode(token.type, child);
       }
       case Token.TOK_STAR: {
-        const left: ExpressionNode = { type: 'Identity' };
-        return { type: 'ValueProjection', left, right: this.parseProjectionRHS(bindingPower.Star) };
+        return new ValueProjectionNode(IDENTITY, this.parseProjectionRHS(bindingPower.Star));
       }
       case Token.TOK_FILTER:
-        return this.led(token.type, { type: 'Identity' });
+        return this.led(token.type, IDENTITY);
       case Token.TOK_LBRACE:
         return this.parseMultiselectHash();
       case Token.TOK_FLATTEN: {
-        const left: ExpressionNode = {
-          type: 'Flatten',
-          child: { type: 'Identity' },
-        };
-        const right: ExpressionNode = this.parseProjectionRHS(bindingPower.Flatten);
-        return { type: 'Projection', left, right };
+        const left = new FlattenNode(IDENTITY);
+        const right = this.parseProjectionRHS(bindingPower.Flatten);
+        return new ProjectionNode(left, right);
       }
       case Token.TOK_LBRACKET: {
         if (this.lookahead(0) === Token.TOK_NUMBER || this.lookahead(0) === Token.TOK_COLON) {
           const right = this.parseIndexExpression();
-          return this.projectIfSlice({ type: 'Identity' }, right);
+          return this.projectIfSlice(IDENTITY, right);
         }
         if (this.lookahead(0) === Token.TOK_STAR && this.lookahead(1) === Token.TOK_RBRACKET) {
           this.advance();
           this.advance();
           const right = this.parseProjectionRHS(bindingPower.Star);
-          return {
-            left: { type: 'Identity' },
-            right,
-            type: 'Projection',
-          };
+          return new ProjectionNode(IDENTITY, right);
         }
         return this.parseMultiselectList();
       }
       case Token.TOK_CURRENT:
-        return { type: Token.TOK_CURRENT };
+        return new CurrentNode();
       case Token.TOK_ROOT:
-        return { type: Token.TOK_ROOT };
+        return new RootNode();
       case Token.TOK_EXPREF: {
         const child = this.expression(bindingPower.Expref);
-        return { type: 'ExpressionReference', child };
+        return new ExpressionReferenceNode(child);
       }
       case Token.TOK_LPAREN: {
         const expression = this.expression(0);
@@ -201,64 +202,56 @@ class TokenParser {
         const trueExpr = this.expression(0);
         this.match(Token.TOK_COLON);
         const falseExpr = this.expression(0);
-        return {
-          type: 'Ternary',
-          condition: left,
-          trueExpr,
-          falseExpr,
-        };
+        return new TernaryNode(left, trueExpr, falseExpr);
       }
       case Token.TOK_DOT: {
         const rbp = bindingPower.Dot;
         if (this.lookahead(0) !== Token.TOK_STAR) {
           const right = this.parseDotRHS(rbp);
-          return { type: 'Subexpression', left, right };
+          return new SubexpressionNode(left, right);
         }
         this.advance();
         const right = this.parseProjectionRHS(rbp);
-        return { type: 'ValueProjection', left, right };
+        return new ValueProjectionNode(left, right);
       }
       case Token.TOK_PIPE: {
         const right = this.expression(bindingPower.Pipe);
-        return { type: 'Pipe', left, right };
+        return new PipeNode(left, right);
       }
       case Token.TOK_OR: {
         const right = this.expression(bindingPower.Or);
-        return { type: 'OrExpression', left, right };
+        return new OrExpressionNode(left, right);
       }
       case Token.TOK_AND: {
         const right = this.expression(bindingPower.And);
-        return { type: 'AndExpression', left, right };
+        return new AndExpressionNode(left, right);
       }
       case Token.TOK_LPAREN: {
-        if (left.type !== 'Field') {
+        if (!(left instanceof FieldNode)) {
           throw new Error('Syntax error: expected a Field node');
         }
         const name = left.name;
         const args = this.parseCommaSeparatedExpressionsUntilToken(Token.TOK_RPAREN);
-        const node: FunctionNode = { name, type: 'Function', children: args };
-        return node;
+        return new FunctionNode(name, args);
       }
       case Token.TOK_FILTER: {
         const condition = this.expression(0);
         this.match(Token.TOK_RBRACKET);
-        const right: ExpressionNode =
-          this.lookahead(0) === Token.TOK_FLATTEN ? { type: 'Identity' } : this.parseProjectionRHS(bindingPower.Filter);
-        return { type: 'FilterProjection', left, right, condition };
+        const right =
+          this.lookahead(0) === Token.TOK_FLATTEN ? IDENTITY : this.parseProjectionRHS(bindingPower.Filter);
+        return new FilterProjectionNode(left, right, condition);
       }
       case Token.TOK_FLATTEN: {
-        const leftNode: UnaryExpressionNode = { type: 'Flatten', child: left };
+        const leftNode = new FlattenNode(left);
         const right = this.parseProjectionRHS(bindingPower.Flatten);
-        return { type: 'Projection', left: leftNode, right };
+        return new ProjectionNode(leftNode, right);
       }
       case Token.TOK_ASSIGN: {
-        const leftNode = left as VariableNode;
+        if (!(left instanceof VariableNode)) {
+          throw new Error('Syntax error: expected a Variable node');
+        }
         const right = this.expression(0);
-        return {
-          type: 'Binding',
-          variable: leftNode.name,
-          reference: right,
-        };
+        return new BindingNode(left.name, right);
       }
       case Token.TOK_EQ:
       case Token.TOK_NE:
@@ -284,7 +277,7 @@ class TokenParser {
         this.match(Token.TOK_STAR);
         this.match(Token.TOK_RBRACKET);
         const right = this.parseProjectionRHS(bindingPower.Star);
-        return { type: 'Projection', left, right };
+        return new ProjectionNode(left, right);
       }
 
       default:
@@ -319,24 +312,13 @@ class TokenParser {
     const value = Number(this.lookaheadToken(0).value);
     this.advance();
     this.match(Token.TOK_RBRACKET);
-    return { type: 'Index', value };
+    return new IndexNode(value);
   }
 
-  private projectIfSlice(
-    left: ExpressionNode,
-    right: ExpressionNode,
-  ): BinaryExpressionNode<'Projection' | 'IndexExpression'> {
-    const indexExpr: BinaryExpressionNode<'IndexExpression'> = {
-      type: 'IndexExpression',
-      left,
-      right,
-    };
-    if (right.type === 'Slice') {
-      return {
-        left: indexExpr,
-        right: this.parseProjectionRHS(bindingPower.Star),
-        type: 'Projection',
-      };
+  private projectIfSlice(left: ExpressionNode, right: ExpressionNode): IndexExpressionNode | ProjectionNode {
+    const indexExpr = new IndexExpressionNode(left, right);
+    if (right instanceof SliceNode) {
+      return new ProjectionNode(indexExpr, this.parseProjectionRHS(bindingPower.Star));
     }
     return indexExpr;
   }
@@ -369,18 +351,14 @@ class TokenParser {
     this.match(Token.TOK_RBRACKET);
 
     const [start, stop, step] = parts;
-    return { type: 'Slice', start, stop, step };
+    return new SliceNode(start, stop, step);
   }
 
   private parseLetExpression(): LetExpressionNode {
     const separated = this.parseCommaSeparatedExpressionsUntilKeyword('in');
     const expression = this.expression(0);
     const bindings = separated.map(binding => binding as BindingNode);
-    return {
-      type: 'LetExpression',
-      bindings: bindings,
-      expression: expression,
-    };
+    return new LetExpressionNode(bindings, expression);
   }
 
   private parseCommaSeparatedExpressionsUntilKeyword(keyword: string): ExpressionNode[] {
@@ -421,12 +399,12 @@ class TokenParser {
 
   private parseComparator(left: ExpressionNode, comparator: ComparatorType): ComparatorNode {
     const right = this.expression(bindingPower[comparator]);
-    return { type: 'Comparator', name: comparator, left, right };
+    return new ComparatorNode(comparator, left, right);
   }
 
   private parseArithmetic(left: ExpressionNode, operator: BinaryOperatorType): BinaryArithmeticNode {
     const right = this.expression(bindingPower[operator]);
-    return { type: 'Arithmetic', operator: operator, left, right };
+    return new BinaryArithmeticNode(operator, left, right);
   }
 
   private parseDotRHS(rbp: number): ExpressionNode {
@@ -449,7 +427,7 @@ class TokenParser {
 
   private parseProjectionRHS(rbp: number): ExpressionNode {
     if (bindingPower[this.lookahead(0)] < 10) {
-      return { type: 'Identity' };
+      return IDENTITY;
     }
     if (this.lookahead(0) === Token.TOK_LBRACKET) {
       return this.expression(rbp);
@@ -478,7 +456,7 @@ class TokenParser {
       }
     }
     this.match(Token.TOK_RBRACKET);
-    return { type: 'MultiSelectList', children: expressions };
+    return new MultiSelectListNode(expressions);
   }
 
   private parseMultiselectHash(): ExpressionNode {
@@ -497,7 +475,7 @@ class TokenParser {
       this.advance();
       this.match(Token.TOK_COLON);
       value = this.expression(0);
-      pairs.push({ value, type: 'KeyValuePair', name: keyName });
+      pairs.push(new KeyValuePairNode(keyName, value));
       if (this.lookahead(0) === Token.TOK_COMMA) {
         this.match(Token.TOK_COMMA);
       } else if (this.lookahead(0) === Token.TOK_RBRACE) {
@@ -505,7 +483,7 @@ class TokenParser {
         break;
       }
     }
-    return { type: 'MultiSelectHash', children: pairs };
+    return new MultiSelectHashNode(pairs);
   }
 }
 

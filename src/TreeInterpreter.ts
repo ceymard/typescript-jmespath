@@ -18,6 +18,10 @@ export class TreeInterpreter {
     this._scope = new ScopeChain();
   }
 
+  get rootValue(): JSONValue | null {
+    return this._rootValue;
+  }
+
   withScope(scope: ScopeEntry): TreeInterpreter {
     const interpreter = new TreeInterpreter();
     interpreter.runtime._functionTable = this.runtime._functionTable;
@@ -29,7 +33,8 @@ export class TreeInterpreter {
   search(node: ExpressionNode, value: JSONValue): JSONValue {
     this._rootValue = value;
     this._scope = emptyScopeChain;
-    return this.visit(node, value) as JSONValue;
+    return node.eval(value, emptyScopeChain, this.runtime);
+    // return this.visit(node, value) as JSONValue;
   }
 
   visit(node: ExpressionNode, value: JSONValue | ExpressionNode): JSONValue | ExpressionNode | ExpressionReference {

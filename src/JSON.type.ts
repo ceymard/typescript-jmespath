@@ -7,3 +7,8 @@ export type JSONArrayObject = ReadonlyArray<JSONObject>;
 export type JSONArrayKeyValuePairs = ReadonlyArray<[string, JSONValue]>;
 export type JSONArrayArray = ReadonlyArray<JSONArray>;
 export type JSONArray = ReadonlyArray<JSONValue>;
+
+
+export function isObject(value: JSONValue): value is JSONObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
