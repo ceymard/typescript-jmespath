@@ -5,19 +5,20 @@ import { Scope } from './Scope';
 
 export class TreeInterpreter {
   runtime: Runtime;
-  private _rootValue: JSONValue | null = null;
 
   constructor() {
     this.runtime = new Runtime(this);
   }
 
-  get rootValue(): JSONValue | null {
-    return this._rootValue;
+  searchWithScope(node: ExpressionNode, value: JSONValue, scope: Scope): JSONValue {
+    scope.setValue("", value);
+    return node.eval(value, scope, this.runtime) as JSONValue;
   }
 
   search(node: ExpressionNode, value: JSONValue): JSONValue {
-    this._rootValue = value;
-    return node.eval(value, new Scope(), this.runtime) as JSONValue;
+    const scope = new Scope();
+    scope.setValue("", value);
+    return node.eval(value, scope, this.runtime) as JSONValue;
   }
 
   computeSliceParams(arrayLength: number, sliceNode: SliceNode): { start: number; stop: number; step: number } {

@@ -94,6 +94,11 @@ function search(data: JSONValue, expression: string, options?: Options): JSONVal
   return TreeInterpreterInst.search(nodeTree, data);
 }
 
+function searchWithScope(data: JSONValue, expression: string, scope: Scope, options?: Options): JSONValue {
+  const nodeTree = Parser.parse(expression, options);
+  return TreeInterpreterInst.searchWithScope(nodeTree, data, scope);
+}
+
 const TreeInterpreter = TreeInterpreterInst;
 
 const jmespath = {
@@ -106,6 +111,7 @@ const jmespath = {
   getCustomFunctions,
   clearCustomFunctions,
   search,
+  searchWithScope,
   tokenize,
   TreeInterpreter,
   TYPE_ANY,

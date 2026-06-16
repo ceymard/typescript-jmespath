@@ -304,17 +304,6 @@ export class CurrentNode implements Node {
   }
 }
 
-export class RootNode implements Node {
-
-  get type() {
-    return Token.TOK_ROOT;
-  }
-
-  eval(_value: JSONValue, _scope: Scope, runtime: Runtime): JSONValue {
-    return runtime._interpreter.rootValue;
-  }
-}
-
 export class NotExpressionNode implements Node {
 
   constructor(public readonly child: ExpressionNode) {}

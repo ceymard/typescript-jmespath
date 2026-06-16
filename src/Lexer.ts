@@ -69,22 +69,18 @@ class StreamLexer {
         this._current += 1;
       } else if (stream[this._current] === '$') {
         start = this._current;
+        let identifier = "";
         if (this._current + 1 < stream.length && isAlpha(stream[this._current + 1])) {
           this._current += 1;
           identifier = this.consumeUnquotedIdentifier(stream);
-          tokens.push({
-            start,
-            type: Token.TOK_VARIABLE,
-            value: identifier,
-          });
         } else {
-          tokens.push({
-            start: start,
-            type: Token.TOK_ROOT,
-            value: stream[this._current],
-          });
           this._current += 1;
         }
+        tokens.push({
+          start,
+          type: Token.TOK_VARIABLE,
+          value: identifier,
+        });
       } else if (stream[this._current] === '-') {
         if (this._current + 1 < stream.length && isNum(stream[this._current + 1])) {
           const token = this.consumeNumber(stream);

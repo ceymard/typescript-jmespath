@@ -3,7 +3,7 @@ import jmespath from '../src';
 
 describe('tokenize', () => {
   it('should tokenize root node reference', () => {
-    expect(jmespath.tokenize('$')).toMatchObject([{ type: 'Root', value: '$', start: 0 }]);
+    expect(jmespath.tokenize('$')).toMatchObject([{ type: 'Variable', value: '', start: 0 }]);
   });
   it('should tokenize variable reference', () => {
     expect(jmespath.tokenize('$foo')).toMatchObject([{ type: 'Variable', value: 'foo', start: 0 }]);
