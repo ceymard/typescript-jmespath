@@ -593,25 +593,24 @@ export class Runtime implements FunctionRegistry {
     if (obj === null) {
       return InputArgument.TYPE_NULL;
     }
-    if (typeof obj === 'string') {
-      return InputArgument.TYPE_STRING;
+    switch (typeof obj) {
+      case 'string':
+        return InputArgument.TYPE_STRING;
+      case 'number':
+        return InputArgument.TYPE_NUMBER;
+      case 'boolean':
+        return InputArgument.TYPE_BOOLEAN;
+      case 'object':
+        if (Array.isArray(obj)) {
+          return InputArgument.TYPE_ARRAY;
+        }
+        if (obj instanceof Ref) {
+          return InputArgument.TYPE_EXPREF;
+        }
+        return InputArgument.TYPE_OBJECT;
+      default:
+        return undefined;
     }
-    if (typeof obj === 'number') {
-      return InputArgument.TYPE_NUMBER;
-    }
-    if (typeof obj === 'boolean') {
-      return InputArgument.TYPE_BOOLEAN;
-    }
-    if (Array.isArray(obj)) {
-      return InputArgument.TYPE_ARRAY;
-    }
-    if (typeof obj === 'object') {
-      if (obj instanceof Ref) {
-        return InputArgument.TYPE_EXPREF;
-      }
-      return InputArgument.TYPE_OBJECT;
-    }
-    return;
   }
 
   createKeyFunction(exprefNode: Ref, allowedTypes: InputArgument[]): (x: JSONValue) => JSONValue {
