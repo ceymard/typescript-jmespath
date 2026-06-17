@@ -79,8 +79,11 @@ class TokenParser {
   index = 0;
   tokens: LexerToken[] = [];
 
+  _enable_object_property_shorthand = false;
+
   parse(expression: string, options?: Options): ExpressionNode {
     this.loadTokens(expression, options || { enable_legacy_literals: false });
+    this._enable_object_property_shorthand = !!options?.enable_object_property_shorthand || !!options?.enable_experiments;
     this.index = 0;
 
     const ast = this.expression(0);
@@ -471,7 +474,7 @@ class TokenParser {
       keyName = keyToken.value as string;
       const look = this.lookaheadToken(1);
       this.advance();
-      if (look.type !== Token.TOK_COLON) {
+      if (look.type !== Token.TOK_COLON && this._enable_object_property_shorthand) {
         pairs.push(new KeyValuePairNode(keyName, new FieldNode(keyName)));
       } else {
         this.match(Token.TOK_COLON);
