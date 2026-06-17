@@ -60,6 +60,17 @@ export const isFalse = (obj: unknown): boolean => {
   return false;
 };
 
+export function isIdentifierStart(ch: string): boolean {
+  // unicode JS valid test. We omit the '$'
+  return /^[\p{L}\p{Nl}_]$/u.test(ch);
+};
+
+export function isIdentifierPart(ch: string): boolean {
+  // unicode JS valid test
+  return /^[\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}_$]$/u.test(ch);
+};
+
+
 export const isAlpha = (ch: string): boolean => {
   return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_';
 };

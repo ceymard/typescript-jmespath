@@ -83,7 +83,7 @@ class TokenParser {
 
   parse(expression: string, options?: Options): ExpressionNode {
     this.loadTokens(expression, options || { enable_legacy_literals: false });
-    this._enable_object_property_shorthand = !!options?.enable_object_property_shorthand || !!options?.enable_experiments;
+    this._enable_object_property_shorthand = options?.enable_object_property_shorthand ?? options?.enable_experiments ?? false;
     this.index = 0;
 
     const ast = this.expression(0);

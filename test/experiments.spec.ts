@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import jmespath from '../src';
 
+describe("unquoted unicode identifiers", () => {
+  it("are usable in experiment mode", () => {
+    const result = jmespath.search({ foö: 'bar', bàr: 'baz' }, '{foo: foö,bar: bàr}', {
+      enable_experiments: true
+    });
+    expect(result).toStrictEqual({ foo: 'bar', bar: 'baz' });
+  })
+})
+
 describe('object property shorthand syntax', () => {
   it("should be allowed when enabled", () => {
     const result = jmespath.search({ foo: 'bar', bar: 'baz' }, '{foo,bar}', {

@@ -58,4 +58,7 @@ export interface LexerOptions {
   // Setting this flag to `true` enables support for legacy syntax.
   //
   enable_legacy_literals?: boolean;
+
+  enable_unicode_identifiers?: boolean;
+  enable_experiments?: boolean
 }

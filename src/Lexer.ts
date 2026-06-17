@@ -1,6 +1,6 @@
 import { JSONValue } from './JSON.type';
 import { LexerOptions, LexerToken, Token } from './Lexer.type';
-import { isAlpha, isAlphaNum, isNum } from './utils/index';
+import { isAlpha, isAlphaNum, isIdentifierPart, isIdentifierStart, isNum } from './utils/index';
 import { replace } from './utils/strings';
 
 export const basicTokens: Record<string, Token> = {
@@ -43,16 +43,27 @@ class StreamLexer {
   private _current = 0;
   private _enable_legacy_literals = false;
 
+  private _isIdentStart = isAlpha
+  private _isIdentPart = isAlphaNum
+
   tokenize(stream: string, options?: LexerOptions): LexerToken[] {
     const tokens: LexerToken[] = [];
     this._current = 0;
-    this._enable_legacy_literals = options?.enable_legacy_literals || false;
+    this._enable_legacy_literals = options?.enable_legacy_literals ?? false;
+
+    if (options?.enable_unicode_identifiers ?? options?.enable_experiments) {
+      this._isIdentStart = isIdentifierStart
+      this._isIdentPart = isIdentifierPart
+    } else {
+      this._isIdentStart = isAlpha
+      this._isIdentPart = isAlphaNum
+    }
 
     let start;
     let identifier;
     let token;
     while (this._current < stream.length) {
-      if (isAlpha(stream[this._current])) {
+      if (this._isIdentStart(stream[this._current])) {
         start = this._current;
         identifier = this.consumeUnquotedIdentifier(stream);
         tokens.push({
@@ -70,7 +81,7 @@ class StreamLexer {
       } else if (stream[this._current] === '$') {
         start = this._current;
         let identifier = "";
-        if (this._current + 1 < stream.length && isAlpha(stream[this._current + 1])) {
+        if (this._current + 1 < stream.length && this._isIdentPart(stream[this._current + 1])) {
           this._current += 1;
           identifier = this.consumeUnquotedIdentifier(stream);
         } else {
@@ -141,7 +152,7 @@ class StreamLexer {
   private consumeUnquotedIdentifier(stream: string): string {
     const start = this._current;
     this._current += 1;
-    while (this._current < stream.length && isAlphaNum(stream[this._current])) {
+    while (this._current < stream.length && this._isIdentPart(stream[this._current])) {
       this._current += 1;
     }
     return stream.slice(start, this._current);
