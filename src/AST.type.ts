@@ -612,7 +612,6 @@ export class BinaryArithmeticNode implements Node {
 export type ExpressionNode =
   | IdentityNode
   | CurrentNode
-  | RootNode
   | NotExpressionNode
   | FlattenNode
   | UnaryArithmeticNode

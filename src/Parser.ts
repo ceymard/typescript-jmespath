@@ -24,7 +24,6 @@ import {
   OrExpressionNode,
   PipeNode,
   ProjectionNode,
-  RootNode,
   SliceNode,
   SubexpressionNode,
   TernaryNode,
@@ -180,8 +179,6 @@ class TokenParser {
       }
       case Token.TOK_CURRENT:
         return new CurrentNode();
-      case Token.TOK_ROOT:
-        return new RootNode();
       case Token.TOK_EXPREF: {
         const child = this.expression(bindingPower.Expref);
         return new ExpressionReferenceNode(child);
