@@ -1,25 +1,22 @@
-import { Text } from '../src/utils/text';
+import { codePointLength, compareCodePoints } from '../src/utils/text';
 
-describe('text', () => {
-  it('should look like a string', () => {
-    expect(new Text('hello').string).toEqual('hello');
+describe('codePointLength', () => {
+  it('should count ASCII characters', () => {
+    expect(codePointLength('hello')).toEqual(5);
   });
   it('should handle surrogate pair as a single code point', () => {
-    expect(new Text('𝌆').length).toEqual(1);
+    expect(codePointLength('𝌆')).toEqual(1);
   });
 });
 
-describe('text comparer', () => {
-  it('should order two text objects <=', () => {
-    expect(new Text('hello').compareTo('world')).toEqual(-1);
-    expect(Text.comparer('hello', 'world')).toEqual(-1);
+describe('compareCodePoints', () => {
+  it('should order two strings <=', () => {
+    expect(compareCodePoints('hello', 'world')).toEqual(-1);
   });
-  it('should order two text objects == ', () => {
-    expect(new Text('goodbye').compareTo('goodbye')).toEqual(-1);
-    expect(Text.comparer('goodbye', 'goodbye')).toEqual(-1);
+  it('should order two strings == ', () => {
+    expect(compareCodePoints('goodbye', 'goodbye')).toEqual(-1);
   });
-  it('should order two text objects >= ', () => {
-    expect(new Text('world').compareTo('cruel')).toEqual(1);
-    expect(Text.comparer('world', 'cruel')).toEqual(1);
+  it('should order two strings >= ', () => {
+    expect(compareCodePoints('world', 'cruel')).toEqual(1);
   });
 });

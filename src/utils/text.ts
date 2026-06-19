@@ -1,48 +1,35 @@
-export class Text {
-  private _text: string;
-  constructor(text: string) {
-    this._text = text;
+export function codePointLength(text: string): number {
+  let length = 0;
+  for (const _ of text) {
+    length += 1;
   }
+  return length;
+}
 
-  public get string(): string {
-    return this._text;
-  }
+export function reverseCodePoints(text: string): string {
+  return [...text].reverse().join('');
+}
 
-  public get length(): number {
-    return this.codePoints.length;
-  }
-
-  public compareTo(other: string): number {
-    return Text.compare(this, new Text(other));
-  }
-
-  public static get comparer(): (lhs: string, rhs: string) => number {
-    const stringComparer = (left: string, right: string): number => {
-      return new Text(left).compareTo(right);
-    };
-    return stringComparer;
-  }
-
-  public static compare(left: Text, right: Text): number {
-    const leftCp = left.codePoints;
-    const rightCp = right.codePoints;
-    for (let index = 0; index < Math.min(leftCp.length, rightCp.length); index++) {
-      if (leftCp[index] === rightCp[index]) {
-        continue;
-      }
-      return leftCp[index] - rightCp[index] > 0 ? 1 : -1;
+export function compareCodePoints(left: string, right: string): number {
+  const leftIter = left[Symbol.iterator]();
+  const rightIter = right[Symbol.iterator]();
+  for (;;) {
+    const leftNext = leftIter.next();
+    const rightNext = rightIter.next();
+    if (leftNext.done && rightNext.done) {
+      return -1;
     }
-    return leftCp.length - rightCp.length > 0 ? 1 : -1;
-  }
-
-  public reverse(): string {
-    return String.fromCodePoint(...this.codePoints.reverse());
-  }
-
-  private get codePoints(): number[] {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    // biome-ignore lint: lint/style/noNonNullAssertion
-    const array = [...this._text].map(s => s.codePointAt(0)!);
-    return array;
+    if (leftNext.done) {
+      return -1;
+    }
+    if (rightNext.done) {
+      return 1;
+    }
+    const leftCp = leftNext.value.codePointAt(0)!;
+    const rightCp = rightNext.value.codePointAt(0)!;
+    if (leftCp === rightCp) {
+      continue;
+    }
+    return leftCp > rightCp ? 1 : -1;
   }
 }

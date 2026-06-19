@@ -21,7 +21,7 @@ import {
   trimRight,
   upper,
 } from './utils/strings';
-import { Text } from './utils/text';
+import { codePointLength, compareCodePoints, reverseCodePoints } from './utils/text';
 
 export enum InputArgument {
   TYPE_NUMBER = 0,
@@ -711,7 +711,7 @@ export class Runtime implements FunctionRegistry {
 
   private functionLength: RuntimeFunction<[string | JSONArray | JSONObject], number> = ([inputValue]) => {
     if (typeof inputValue === 'string') {
-      return new Text(inputValue).length;
+      return codePointLength(inputValue);
     }
     if (Array.isArray(inputValue)) {
       return inputValue.length;
@@ -740,7 +740,7 @@ export class Runtime implements FunctionRegistry {
     const elements = inputValue as string[];
     let maxElement = elements[0];
     for (let i = 1; i < elements.length; i += 1) {
-      if (maxElement.localeCompare(elements[i]) < 0) {
+      if (compareCodePoints(maxElement, elements[i]) < 0) {
         maxElement = elements[i];
       }
     }
@@ -786,7 +786,7 @@ export class Runtime implements FunctionRegistry {
     const elements = inputValue as string[];
     let minElement = elements[0];
     for (let i = 1; i < elements.length; i += 1) {
-      if (elements[i].localeCompare(minElement) < 0) {
+      if (compareCodePoints(elements[i], minElement) < 0) {
         minElement = elements[i];
       }
     }
@@ -849,7 +849,7 @@ export class Runtime implements FunctionRegistry {
   private functionReverse: RuntimeFunction<[string | JSONArray], string | JSONArray> = ([inputValue]) => {
     const typeName = this.getTypeName(inputValue);
     if (typeName === InputArgument.TYPE_STRING) {
-      return new Text(inputValue as string).reverse();
+      return reverseCodePoints(inputValue as string);
     }
     const reversedArray = [...(inputValue as JSONArray)];
     reversedArray.reverse();
@@ -861,7 +861,7 @@ export class Runtime implements FunctionRegistry {
       return inputValue;
     }
     if (typeof inputValue[0] === 'string') {
-      return (<string[]>[...inputValue]).sort(Text.comparer);
+      return (<string[]>[...inputValue]).sort(compareCodePoints);
     }
     return [...inputValue].sort();
   };
@@ -893,7 +893,7 @@ export class Runtime implements FunctionRegistry {
         throwInvalidTypeError(this, exprB);
       }
       if (requiredType === InputArgument.TYPE_STRING) {
-        return Text.comparer(<string>exprA, <string>exprB);
+        return compareCodePoints(<string>exprA, <string>exprB);
       }
       return <number>exprA - <number>exprB;
     });
