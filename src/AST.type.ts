@@ -18,6 +18,7 @@ import { Scope } from './Scope';
 type EvalResult = JSONValue | Ref;
 
 export interface Node {
+  isCanIndexString?: boolean;
   eval(value: JSONValue, scope: Scope, runtime: Runtime): EvalResult;
 }
 
@@ -73,7 +74,7 @@ export class SliceNode implements Node {
     public readonly start: number | null,
     public readonly stop: number | null,
     public readonly step: number | null,
-  ) {}
+  ) { }
 
   get type() {
     return 'Slice' as const;
@@ -443,6 +444,7 @@ export class ProjectionNode implements Node {
     if (!Array.isArray(base)) {
       return null;
     }
+
     const collected: JSONValue[] = [];
     for (const elem of base) {
       const current = this.right.eval(elem, scope, runtime) as JSONValue;

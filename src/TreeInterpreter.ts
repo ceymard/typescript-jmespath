@@ -3,6 +3,8 @@ import type { JSONArray, JSONValue } from './JSON.type';
 import { Runtime } from './Runtime';
 import { Scope } from './Scope';
 
+const empty_scope = new Scope();
+
 export class TreeInterpreter {
   runtime: Runtime;
 
@@ -16,7 +18,8 @@ export class TreeInterpreter {
   }
 
   search(node: ExpressionNode, value: JSONValue): JSONValue {
-    const scope = new Scope();
+    // const scope = new Scope();
+    const scope = empty_scope
     scope.setValue("", value);
     return node.eval(value, scope, this.runtime) as JSONValue;
   }
@@ -52,14 +55,21 @@ export class TreeInterpreter {
   }
 
   slice(collection: JSONArray, start: number, end: number, step: number): JSONArray {
-    const result = [];
+    if (step === 1) {
+      return collection.slice(start, end)
+    }
+    const len = Math.ceil(Math.abs(start - end) / Math.abs(step))
+    const result = new Array(len)
+    let idx = 0
     if (step > 0) {
       for (let i = start; i < end; i += step) {
-        result.push(collection[i]);
+        result[idx] = collection[i]
+        idx++
       }
     } else {
       for (let i = start; i > end; i += step) {
-        result.push(collection[i]);
+        result[idx] = collection[i]
+        idx++
       }
     }
     return result;

@@ -35,9 +35,11 @@ import Lexer from './Lexer';
 import { LexerToken, Token, tokenName } from './Lexer.type';
 import { Options } from './Parser.type';
 
-const bindingPower: Record<Token, number> = {
+const bindingPower = {
   [Token.TOK_EOF]: 0,
   [Token.TOK_VARIABLE]: 0,
+  [Token.TOK_COLON]: 0,
+  [Token.TOK_LITERAL]: 0,
   [Token.TOK_UNQUOTEDIDENTIFIER]: 0,
   [Token.TOK_QUOTEDIDENTIFIER]: 0,
   [Token.TOK_RBRACKET]: 0,
@@ -318,7 +320,11 @@ class TokenParser {
   private projectIfSlice(left: ExpressionNode, right: ExpressionNode): IndexExpressionNode | ProjectionNode {
     const indexExpr = new IndexExpressionNode(left, right);
     if (right instanceof SliceNode) {
-      return new ProjectionNode(indexExpr, this.parseProjectionRHS(bindingPower[Token.TOK_STAR]));
+      const rhs = this.parseProjectionRHS(bindingPower[Token.TOK_STAR]);
+      if (rhs === IDENTITY) {
+        return indexExpr
+      }
+      return new ProjectionNode(indexExpr, rhs);
     }
     return indexExpr;
   }
