@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import jmespath from '../src';
+import { Token } from '../src/Lexer.type';
 import { expectError } from './error.utils';
 
 describe('parsing', () => {
@@ -15,7 +16,7 @@ describe('parsing', () => {
   it('should parse arithmetic addition', () => {
     expect(jmespath.compile('foo + bar')).toMatchObject({
       type: 'Arithmetic',
-      operator: 'Plus',
+      operator: Token.TOK_PLUS,
       left: { type: 'Field', name: 'foo' },
       right: { type: 'Field', name: 'bar' },
     });
@@ -23,7 +24,7 @@ describe('parsing', () => {
   it('should parse arithmetic subtraction', () => {
     const expected = {
       type: 'Arithmetic',
-      operator: 'Minus',
+      operator: Token.TOK_MINUS,
       left: { type: 'Field', name: 'foo' },
       right: { type: 'Field', name: 'bar' },
     };
@@ -33,7 +34,7 @@ describe('parsing', () => {
   it('should parse arithmetic unary negation', () => {
     const expected = {
       type: 'Unary',
-      operator: 'Minus',
+      operator: Token.TOK_MINUS,
       operand: { type: 'Field', name: 'bar' },
     };
     expect(jmespath.compile('-bar')).toMatchObject(expected);

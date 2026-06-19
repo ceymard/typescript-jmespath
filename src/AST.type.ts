@@ -94,7 +94,13 @@ export class SliceNode implements Node {
   }
 }
 
-export type ComparatorType = 'GT' | 'LT' | 'GTE' | 'LTE' | 'NE' | 'EQ';
+export type ComparatorType =
+  | Token.TOK_GT
+  | Token.TOK_LT
+  | Token.TOK_GTE
+  | Token.TOK_LTE
+  | Token.TOK_NE
+  | Token.TOK_EQ;
 
 export class ComparatorNode implements Node {
 
@@ -113,9 +119,9 @@ export class ComparatorNode implements Node {
     const second = this.right.eval(value, scope, runtime);
 
     switch (this.name) {
-      case 'EQ':
+      case Token.TOK_EQ:
         return strictDeepEqual(first, second);
-      case 'NE':
+      case Token.TOK_NE:
         return !strictDeepEqual(first, second);
     }
 
@@ -124,13 +130,13 @@ export class ComparatorNode implements Node {
     }
 
     switch (this.name) {
-      case 'GT':
+      case Token.TOK_GT:
         return first > second;
-      case 'GTE':
+      case Token.TOK_GTE:
         return first >= second;
-      case 'LT':
+      case Token.TOK_LT:
         return first < second;
-      case 'LTE':
+      case Token.TOK_LTE:
         return first <= second;
     }
   }
@@ -296,7 +302,7 @@ export const IDENTITY = new IdentityNode();
 export class CurrentNode implements Node {
 
   get type() {
-    return Token.TOK_CURRENT;
+    return 'Current' as const;
   }
 
   eval(value: JSONValue, _scope: Scope, _runtime: Runtime): JSONValue {
@@ -331,7 +337,7 @@ export class FlattenNode implements Node {
   }
 }
 
-export type UnaryOperatorType = 'Plus' | 'Minus';
+export type UnaryOperatorType = Token.TOK_PLUS | Token.TOK_MINUS;
 
 export class UnaryArithmeticNode implements Node {
 
@@ -566,7 +572,14 @@ export class AndExpressionNode implements Node {
   }
 }
 
-export type BinaryOperatorType = 'Plus' | 'Minus' | 'Multiply' | Token.TOK_STAR | 'Divide' | 'Modulo' | 'Div';
+export type BinaryOperatorType =
+  | Token.TOK_PLUS
+  | Token.TOK_MINUS
+  | Token.TOK_MULTIPLY
+  | Token.TOK_STAR
+  | Token.TOK_DIVIDE
+  | Token.TOK_MODULO
+  | Token.TOK_DIV;
 
 export class BinaryArithmeticNode implements Node {
 
