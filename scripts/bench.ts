@@ -1,4 +1,5 @@
 #!/usr/bin/env -S node --expose-gc
+///<reference types="node">
 /**
  * Benchmark suite powered by tinybench (time-based, one isolated run per case).
  *
@@ -477,22 +478,28 @@ function measureMemory(fn: () => void, iterations = MEMORY_ITERATIONS): MemorySt
   global.gc();
   global.gc();
 
-  const startMemory = process.memoryUsage();
+  // Measure per-operation allocation with a forced GC before each sample.
+  // A single batch delta is skewed by V8's GC heuristics: after the timing
+  // pass expands the heap, later cases can look like they allocate far more
+  // because interim garbage is not collected before the end snapshot.
+  let heapDeltaBytes = 0;
+  const startRss = process.memoryUsage().rss;
 
   for (let i = 0; i < iterations; i++) {
+    global.gc();
+    const before = process.memoryUsage().heapUsed;
     fn();
+    heapDeltaBytes += Math.max(0, process.memoryUsage().heapUsed - before);
   }
 
-  const endMemory = process.memoryUsage();
-
-  const heapDeltaBytes = endMemory.heapUsed - startMemory.heapUsed;
-  const rssDeltaBytes = endMemory.rss - startMemory.rss;
-  const heapUsedPerOp = Math.max(0, heapDeltaBytes) / iterations;
+  global.gc();
+  global.gc();
+  const rssDeltaBytes = Math.max(0, process.memoryUsage().rss - startRss);
 
   return {
-    heapUsedPerOp,
-    heapDeltaBytes: Math.max(0, heapDeltaBytes),
-    rssDeltaBytes: Math.max(0, rssDeltaBytes),
+    heapUsedPerOp: heapDeltaBytes / iterations,
+    heapDeltaBytes,
+    rssDeltaBytes,
     iterations,
   };
 }
@@ -510,6 +517,7 @@ function runMemoryPass(cases: BenchmarkCase[]): Record<string, MemoryStats> {
       memory[name] = stats;
     }
     global.gc();
+    global.gc();
   }
 
   return memory;
@@ -517,8 +525,15 @@ function runMemoryPass(cases: BenchmarkCase[]): Record<string, MemoryStats> {
 
 async function runBenchmarks(options: RunOptions): Promise<BenchReport> {
   const cases = filterBenchmarks(getBenchmarkFns(), options.filter);
-  const timing = await runTimingPass(cases, options);
+
+  // Memory pass runs before timing so tinybench's long runs do not expand the
+  // heap and suppress GC during later batch-style measurements.
+  if (options.memoryEnabled && typeof global.gc === 'function') {
+    global.gc();
+    global.gc();
+  }
   const memory = options.memoryEnabled ? runMemoryPass(cases) : {};
+  const timing = await runTimingPass(cases, options);
 
   const benchmarks: Record<string, BenchmarkEntry> = {};
   for (const { name } of cases) {
@@ -626,7 +641,7 @@ function printReport(report: BenchReport, label?: string) {
     console.log('Run with --expose-gc for memory measurements.');
   } else if (report.meta.memoryEnabled) {
     console.log(
-      `Memory: separate pass, net heap growth over ${MEMORY_ITERATIONS.toLocaleString()} ops per case after warmup.`,
+      `Memory: separate pass (before timing), mean allocation over ${MEMORY_ITERATIONS.toLocaleString()} ops per case with GC before each sample.`,
     );
   } else {
     console.log('Memory pass skipped (--no-memory).');
