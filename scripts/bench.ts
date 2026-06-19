@@ -1,8 +1,24 @@
 #!/usr/bin/env -S node --expose-gc
+/**
+ * Benchmark suite powered by tinybench (time-based, one isolated run per case).
+ *
+ * Usage:
+ *   node scripts/bench.ts [module.esm.js] [-o report.json] [-c baseline.json]
+ *   node scripts/bench.ts --filter '^Eval#infra_deep_field$'
+ *   node scripts/bench.ts --filter '^Eval#' --no-memory
+ *
+ * Options:
+ *   -t <ms>            Bench time per case (default: 1000)
+ *   -w <ms>            Warmup time per case (default: 250)
+ *   --filter <regexp>  Filter benchmark names (e.g. '^Eval#', 'infra_deep_field')
+ *   --gc-between       Force GC after each case (off by default)
+ *   --no-memory        Skip the separate memory pass
+ */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { Bench } from 'tinybench';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_MODULE_PATH = resolve(__dirname, '../dist/index.esm.js');
@@ -35,54 +51,79 @@ interface BenchReport {
   meta: {
     timestamp: string;
     nodeVersion: string;
-    warmupIterations: number;
-    timingIterations: number;
-    timingSamples: number;
+    methodology?: 'tinybench-time-based';
+    benchTimeMs?: number;
+    warmupTimeMs?: number;
+    warmupIterations?: number;
+    fixedIterations?: number;
     gcEnabled: boolean;
+    gcBetweenTasks: boolean;
+    isolated: boolean;
+    memoryEnabled: boolean;
+    filter?: string;
     name: string;
   };
   benchmarks: Record<string, BenchmarkEntry>;
 }
 
-interface BenchmarkFn {
+interface BenchmarkCase {
   name: string;
   fn: () => void;
 }
 
-const DEFAULT_WARMUP_ITERATIONS = 1000;
-const DEFAULT_TIMING_ITERATIONS = 10_000;
-const TIMING_SAMPLES = 25;
-const MEMORY_WARMUP = 1000;
-const MEMORY_ITERATIONS = 10_000;
+const DEFAULT_BENCH_TIME_MS = 1000;
+const DEFAULT_WARMUP_TIME_MS = 250;
+const MEMORY_WARMUP = 500;
+const MEMORY_ITERATIONS = 500;
 
 function parseCli() {
   const { values, positionals } = parseArgs({
     options: {
       o: { type: 'string' },
-      w: { type: 'string', default: String(DEFAULT_WARMUP_ITERATIONS) },
-      t: { type: 'string', default: String(DEFAULT_TIMING_ITERATIONS) },
+      w: { type: 'string', default: String(DEFAULT_WARMUP_TIME_MS) },
+      t: { type: 'string', default: String(DEFAULT_BENCH_TIME_MS) },
       c: { type: 'string' },
       compare: { type: 'string' },
       d: { type: 'string' },
+      filter: { type: 'string' },
+      'warmup-iterations': { type: 'string' },
+      iterations: { type: 'string' },
+      'gc-between': { type: 'boolean', default: false },
+      'no-memory': { type: 'boolean', default: false },
     },
     allowPositionals: true,
   });
 
-  const warmupIterations = Number(values.w);
-  const timingIterations = Number(values.t);
-  if (!Number.isFinite(warmupIterations) || warmupIterations < 0) {
-    throw new Error(`Invalid warmup iterations: ${values.w}`);
+  const warmupTimeMs = Number(values.w);
+  const benchTimeMs = Number(values.t);
+  if (!Number.isFinite(warmupTimeMs) || warmupTimeMs < 0) {
+    throw new Error(`Invalid warmup time (ms): ${values.w}`);
   }
-  if (!Number.isFinite(timingIterations) || timingIterations <= 0) {
-    throw new Error(`Invalid timing iterations: ${values.t}`);
+  if (!Number.isFinite(benchTimeMs) || benchTimeMs <= 0) {
+    throw new Error(`Invalid bench time (ms): ${values.t}`);
+  }
+
+  const warmupIterations = values['warmup-iterations'] ? Number(values['warmup-iterations']) : undefined;
+  if (warmupIterations !== undefined && (!Number.isFinite(warmupIterations) || warmupIterations < 0)) {
+    throw new Error(`Invalid warmup iterations: ${values['warmup-iterations']}`);
+  }
+
+  const fixedIterations = values.iterations ? Number(values.iterations) : undefined;
+  if (fixedIterations !== undefined && (!Number.isFinite(fixedIterations) || fixedIterations <= 0)) {
+    throw new Error(`Invalid iterations: ${values.iterations}`);
   }
 
   return {
     outputFile: values.o,
+    benchTimeMs,
+    warmupTimeMs,
     warmupIterations,
-    timingIterations,
+    fixedIterations,
     compareFile: values.c ?? values.compare,
     htmlFile: values.d,
+    filter: values.filter,
+    gcBetween: values['gc-between'] ?? false,
+    memoryEnabled: !values['no-memory'],
     modulePath: positionals[0] ? resolve(positionals[0]) : DEFAULT_MODULE_PATH,
   };
 }
@@ -211,7 +252,7 @@ function runCompiled(compiled: CompiledExpr, data: unknown): () => void {
   };
 }
 
-function getBenchmarkFns(): BenchmarkFn[] {
+function getBenchmarkFns(): BenchmarkCase[] {
   const ordersSmall = buildOrders(100);
   const ordersLarge = buildOrders(1000);
   const logsLarge = buildLogEvents(1000);
@@ -336,59 +377,91 @@ function getBenchmarkFns(): BenchmarkFn[] {
   ];
 }
 
-function computeSampleStats(values: number[]): {
-  mean: number;
-  sd: number;
-  rme: number;
-} {
-  const n = values.length;
-  if (n === 0) {
-    return { mean: 0, sd: 0, rme: 0 };
+function compileFilter(pattern?: string): RegExp | undefined {
+  if (!pattern) {
+    return undefined;
   }
-
-  const mean = values.reduce((sum, value) => sum + value, 0) / n;
-  const variance = n > 1 ? values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (n - 1) : 0;
-  const sd = Math.sqrt(variance);
-  const sem = n > 0 ? sd / Math.sqrt(n) : 0;
-  const rme = mean === 0 ? 0 : (sem / mean) * 100;
-
-  return { mean, sd, rme };
+  try {
+    return new RegExp(pattern);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid --filter regexp: ${pattern} (${message})`);
+  }
 }
 
-function measureTiming(
-  fn: () => void,
-  warmupIterations: number,
-  timingIterations: number,
-  samples = TIMING_SAMPLES,
-): TimingStats {
-  for (let i = 0; i < warmupIterations; i++) {
-    fn();
+function filterBenchmarks(cases: BenchmarkCase[], filter?: RegExp): BenchmarkCase[] {
+  if (!filter) {
+    return cases;
   }
-
-  if (typeof global.gc === 'function') {
-    global.gc();
-    global.gc();
+  const filtered = cases.filter((c) => filter.test(c.name));
+  if (filtered.length === 0) {
+    throw new Error(`No benchmarks matched --filter /${filter.source}/${filter.flags}`);
   }
+  return filtered;
+}
 
-  const totals: number[] = [];
-  for (let sample = 0; sample < samples; sample++) {
-    const start = process.hrtime.bigint();
-    for (let i = 0; i < timingIterations; i++) {
-      fn();
-    }
-    totals.push(Number(process.hrtime.bigint() - start) / 1_000_000);
+function taskResultToTimingStats(task: { runs: number; result?: { period: number; latency: { sd: number; rme: number; samples: number[] }; throughput: { mean: number } } }): TimingStats {
+  const result = task.result;
+  if (!result) {
+    throw new Error('Benchmark task finished without a result');
   }
-
-  const stats = computeSampleStats(totals);
 
   return {
-    iterations: timingIterations,
-    totalMs: stats.mean,
-    sd: stats.sd,
-    rme: stats.rme,
-    opsPerSec: timingIterations / (stats.mean / 1000),
-    samples,
+    iterations: task.runs,
+    totalMs: result.period,
+    sd: result.latency.sd,
+    rme: result.latency.rme,
+    opsPerSec: result.throughput.mean,
+    samples: result.latency.samples.length,
   };
+}
+
+interface RunOptions {
+  benchTimeMs: number;
+  warmupTimeMs: number;
+  warmupIterations?: number;
+  fixedIterations?: number;
+  gcBetween: boolean;
+  memoryEnabled: boolean;
+  filter?: RegExp;
+}
+
+async function runSingleBenchmark(testCase: BenchmarkCase, options: RunOptions): Promise<TimingStats> {
+  const bench = new Bench({
+    name: testCase.name,
+    time: options.benchTimeMs,
+    warmup: true,
+    warmupTime: options.warmupTimeMs,
+    warmupIterations: options.warmupIterations,
+    iterations: options.fixedIterations,
+    teardown: (_task, mode) => {
+      if (mode === 'run' && options.gcBetween && typeof global.gc === 'function') {
+        global.gc();
+      }
+    },
+  });
+
+  bench.add(testCase.name, testCase.fn);
+  await bench.run();
+
+  const task = bench.tasks[0];
+  if (!task) {
+    throw new Error(`Benchmark task missing: ${testCase.name}`);
+  }
+  return taskResultToTimingStats(task);
+}
+
+async function runTimingPass(cases: BenchmarkCase[], options: RunOptions): Promise<Record<string, TimingStats>> {
+  const timing: Record<string, TimingStats> = {};
+
+  for (const testCase of cases) {
+    timing[testCase.name] = await runSingleBenchmark(testCase, options);
+    if (typeof global.gc === 'function') {
+      global.gc();
+    }
+  }
+
+  return timing;
 }
 
 function measureMemory(fn: () => void, iterations = MEMORY_ITERATIONS): MemoryStats | undefined {
@@ -424,29 +497,51 @@ function measureMemory(fn: () => void, iterations = MEMORY_ITERATIONS): MemorySt
   };
 }
 
-function runBenchmarks(warmupIterations: number, timingIterations: number): BenchReport {
-  const benchmarkFns = getBenchmarkFns();
-  const benchmarks: Record<string, BenchmarkEntry> = {};
+function runMemoryPass(cases: BenchmarkCase[]): Record<string, MemoryStats> {
+  const memory: Record<string, MemoryStats> = {};
 
-  for (const { name, fn } of benchmarkFns) {
-    if (typeof global.gc === 'function') {
-      global.gc();
+  if (typeof global.gc !== 'function') {
+    return memory;
+  }
+
+  for (const { name, fn } of cases) {
+    const stats = measureMemory(fn);
+    if (stats) {
+      memory[name] = stats;
     }
+    global.gc();
+  }
 
-    const timing = measureTiming(fn, warmupIterations, timingIterations);
-    const memory = measureMemory(fn);
+  return memory;
+}
 
-    benchmarks[name] = { timing, memory };
+async function runBenchmarks(options: RunOptions): Promise<BenchReport> {
+  const cases = filterBenchmarks(getBenchmarkFns(), options.filter);
+  const timing = await runTimingPass(cases, options);
+  const memory = options.memoryEnabled ? runMemoryPass(cases) : {};
+
+  const benchmarks: Record<string, BenchmarkEntry> = {};
+  for (const { name } of cases) {
+    benchmarks[name] = {
+      timing: timing[name],
+      memory: memory[name],
+    };
   }
 
   return {
     meta: {
       timestamp: new Date().toISOString(),
       nodeVersion: process.version,
-      warmupIterations,
-      timingIterations,
-      timingSamples: TIMING_SAMPLES,
+      methodology: 'tinybench-time-based',
+      benchTimeMs: options.benchTimeMs,
+      warmupTimeMs: options.warmupTimeMs,
+      warmupIterations: options.warmupIterations,
+      fixedIterations: options.fixedIterations,
       gcEnabled: typeof global.gc === 'function',
+      gcBetweenTasks: options.gcBetween,
+      isolated: true,
+      memoryEnabled: options.memoryEnabled,
+      filter: options.filter ? `/${options.filter.source}/${options.filter.flags}` : undefined,
       name: 'typescript-jmespath benchmarks',
     },
     benchmarks,
@@ -472,16 +567,6 @@ function formatOps(value: number): string {
   return value.toFixed(0);
 }
 
-function formatIterations(iterations: number): string {
-  if (iterations >= 1_000_000) {
-    return `${(iterations / 1_000_000).toFixed(1)}M`;
-  }
-  if (iterations >= 1_000) {
-    return `${(iterations / 1_000).toFixed(0)}k`;
-  }
-  return String(iterations);
-}
-
 function formatMemoryPerOp(memory: MemoryStats): string {
   if (memory.heapUsedPerOp < 0.01) {
     return '~0 B';
@@ -500,23 +585,36 @@ function formatBytes(value: number): string {
   return `${value.toFixed(0)} B`;
 }
 
+function latencyColumnLabel(report: BenchReport): string {
+  return report.meta.methodology === 'tinybench-time-based' ? 'Latency/op' : 'Time/batch';
+}
+
 function printReport(report: BenchReport, label?: string) {
   if (label) {
     console.log(`\n=== ${label} ===`);
   }
-  const iterLabel = formatIterations(report.meta.timingIterations);
   console.log(`Timestamp: ${report.meta.timestamp}`);
   console.log(`Node: ${report.meta.nodeVersion}`);
+  if (report.meta.methodology) {
+    console.log(`Methodology: ${report.meta.methodology}`);
+  } else {
+    console.log('Methodology: legacy fixed-iteration (results are not directly comparable on latency)');
+  }
   console.log(
-    `Warmup: ${report.meta.warmupIterations.toLocaleString()} iters | Timed: ${report.meta.timingIterations.toLocaleString()} iters x ${report.meta.timingSamples} samples | GC: ${report.meta.gcEnabled ? 'enabled' : 'disabled'}`,
+    `Config: bench ${report.meta.benchTimeMs} ms | warmup ${report.meta.warmupTimeMs} ms | GC ${report.meta.gcEnabled ? 'enabled' : 'disabled'} | memory ${report.meta.memoryEnabled ? 'on' : 'off'} | isolated per case`,
   );
+  if (report.meta.filter) {
+    console.log(`Filter: ${report.meta.filter}`);
+  }
   console.log('');
 
+  const latencyLabel = latencyColumnLabel(report);
   const rows = Object.entries(report.benchmarks).map(([name, entry]) => ({
     Benchmark: name,
-    [`Time (${iterLabel})`]: `${formatNumber(entry.timing.totalMs, 2)} ms`,
+    [latencyLabel]: `${formatNumber(entry.timing.totalMs, 4)} ms`,
     'Ops/s': formatOps(entry.timing.opsPerSec),
-    SD: `${formatNumber(entry.timing.sd, 2)} ms`,
+    Runs: entry.timing.iterations?.toLocaleString?.() ?? String(entry.timing.iterations),
+    SD: `${formatNumber(entry.timing.sd, 4)} ms`,
     '± RME': `${formatNumber(entry.timing.rme, 2)}%`,
     'Mem/op': entry.memory ? formatMemoryPerOp(entry.memory) : 'n/a',
     'Heap Δ': entry.memory ? formatBytes(entry.memory.heapDeltaBytes) : 'n/a',
@@ -526,10 +624,12 @@ function printReport(report: BenchReport, label?: string) {
 
   if (!report.meta.gcEnabled) {
     console.log('Run with --expose-gc for memory measurements.');
-  } else {
+  } else if (report.meta.memoryEnabled) {
     console.log(
-      `Memory: net heap growth over ${MEMORY_ITERATIONS.toLocaleString()} ops after warmup (short-lived allocations may report ~0 B).`,
+      `Memory: separate pass, net heap growth over ${MEMORY_ITERATIONS.toLocaleString()} ops per case after warmup.`,
     );
+  } else {
+    console.log('Memory pass skipped (--no-memory).');
   }
 }
 
@@ -563,6 +663,12 @@ function deltaClass(value: number, invert = false): 'neutral' | 'good' | 'good-s
 function printComparison(oldReport: BenchReport, newReport: BenchReport) {
   printReport(oldReport, 'Previous run');
   printReport(newReport, 'Current run');
+
+  if (oldReport.meta.methodology !== newReport.meta.methodology) {
+    console.log(
+      '\nNote: methodology differs between runs — compare primarily on Ops/s, not latency columns.',
+    );
+  }
 
   console.log('\n=== Delta (current vs previous) ===');
   const names = [...new Set([...Object.keys(oldReport.benchmarks), ...Object.keys(newReport.benchmarks)])].sort();
@@ -625,7 +731,6 @@ function renderMetricCell(
 function generateHtml(report: BenchReport, compareReport?: BenchReport): string {
   const names = Object.keys(report.benchmarks).sort();
   const title = compareReport ? 'Benchmark Comparison' : 'Benchmark Report';
-  const iterLabel = formatIterations(report.meta.timingIterations);
 
   const rows = names
     .map((name) => {
@@ -634,7 +739,7 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
 
       return `<tr>
         <td class="name">${escapeHtml(name)}</td>
-        ${renderMetricCell(oldEntry?.timing.totalMs, entry.timing.totalMs, (v) => `${v.toFixed(2)} ms`, true)}
+        ${renderMetricCell(oldEntry?.timing.totalMs, entry.timing.totalMs, (v) => `${v.toFixed(4)} ms`, true)}
         ${renderMetricCell(oldEntry?.timing.opsPerSec, entry.timing.opsPerSec, (v) => `${formatOps(v)}/s`)}
         ${renderMetricCell(oldEntry?.memory?.heapUsedPerOp, entry.memory?.heapUsedPerOp, (v) => `${v.toFixed(2)} B/op`, true)}
       </tr>`;
@@ -727,7 +832,7 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
     <div class="meta">
       <p><strong>Generated:</strong> ${escapeHtml(report.meta.timestamp)}</p>
       <p><strong>Node:</strong> ${escapeHtml(report.meta.nodeVersion)}</p>
-      <p><strong>Config:</strong> warmup ${report.meta.warmupIterations.toLocaleString()} iters, timed ${report.meta.timingIterations.toLocaleString()} iters x ${report.meta.timingSamples} samples, GC ${report.meta.gcEnabled ? 'on' : 'off'}</p>
+      <p><strong>Config:</strong> ${escapeHtml(report.meta.methodology)}, bench ${report.meta.benchTimeMs} ms, warmup ${report.meta.warmupTimeMs} ms, GC ${report.meta.gcEnabled ? 'on' : 'off'}, memory ${report.meta.memoryEnabled ? 'on' : 'off'}, isolated per case</p>
       ${compareMeta}
     </div>
     <div class="panel">
@@ -735,7 +840,7 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
         <thead>
           <tr>
             <th>Benchmark</th>
-            <th>Time (${iterLabel})</th>
+            <th>Latency/op</th>
             <th>Throughput</th>
             <th>Memory / op</th>
           </tr>
@@ -758,22 +863,33 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
 
 async function main() {
   try {
-    const options = parseCli();
-    console.log(`Loading module: ${options.modulePath}`);
-    jmespath = await loadJmespathModule(options.modulePath);
-    const report = runBenchmarks(options.warmupIterations, options.timingIterations);
+    const cli = parseCli();
+    console.log(`Loading module: ${cli.modulePath}`);
+    jmespath = await loadJmespathModule(cli.modulePath);
 
-    if (options.outputFile) {
-      writeFileSync(options.outputFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-      console.log(`Wrote ${options.outputFile}`);
+    const runOptions: RunOptions = {
+      benchTimeMs: cli.benchTimeMs,
+      warmupTimeMs: cli.warmupTimeMs,
+      warmupIterations: cli.warmupIterations,
+      fixedIterations: cli.fixedIterations,
+      gcBetween: cli.gcBetween,
+      memoryEnabled: cli.memoryEnabled,
+      filter: compileFilter(cli.filter),
+    };
+
+    const report = await runBenchmarks(runOptions);
+
+    if (cli.outputFile) {
+      writeFileSync(cli.outputFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+      console.log(`Wrote ${cli.outputFile}`);
     }
 
-    const compareReport = options.compareFile ? loadReport(options.compareFile) : undefined;
+    const compareReport = cli.compareFile ? loadReport(cli.compareFile) : undefined;
 
-    if (options.htmlFile) {
+    if (cli.htmlFile) {
       const html = generateHtml(report, compareReport);
-      writeFileSync(options.htmlFile, html, 'utf8');
-      console.log(`Wrote ${options.htmlFile}`);
+      writeFileSync(cli.htmlFile, html, 'utf8');
+      console.log(`Wrote ${cli.htmlFile}`);
     }
 
     if (compareReport) {
