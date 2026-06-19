@@ -867,8 +867,8 @@ export class Runtime implements FunctionRegistry {
   };
 
   private functionSortBy: RuntimeFunction<[number[] | string[], Ref], JSONValue> = resolvedArgs => {
-    const sortedArray = [...resolvedArgs[0]];
-    if (sortedArray.length === 0) {
+    const sortedArray = resolvedArgs[0];
+    if (sortedArray.length === 0 || sortedArray.length === 1) {
       return sortedArray;
     }
     const exprefNode = resolvedArgs[1];
@@ -884,7 +884,7 @@ export class Runtime implements FunctionRegistry {
       );
     }
 
-    return sortedArray.sort((a, b) => {
+    return Array.from(sortedArray as any[]).sort((a, b) => {
       const exprA = this.evaluateExpref(exprefNode, a) as number | string;
       const exprB = this.evaluateExpref(exprefNode, b) as number | string;
       if (this.getTypeName(exprA) !== requiredType) {
