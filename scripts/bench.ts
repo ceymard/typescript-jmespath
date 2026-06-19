@@ -91,23 +91,169 @@ async function loadJmespathModule(modulePath: string) {
   return (await import(pathToFileURL(modulePath).href)).default;
 }
 
-function getBenchmarkFns(): BenchmarkFn[] {
-  const simpleData = { foo: { bar: 'baz' } };
-  const arrayData = {
-    items: Array.from({ length: 100 }, (_, i) => ({ id: i, name: `item${i}`, price: i * 10 })),
-  };
-  const nestedData = { level1: { level2: { level3: { level4: { value: 42 } } } } };
-  const arrayDataLarge = {
-    items: Array.from({ length: 1000 }, (_, i) => ({
-      id: i,
-      name: `item${i}`,
-      price: i * 10,
-      tags: [`tag${i}`, `category${i % 10}`],
+type CompiledExpr = ReturnType<Awaited<typeof import('../src/index')>['default']['compile']>;
+
+interface Order {
+  id: string;
+  status: 'shipped' | 'pending' | 'cancelled';
+  total: number;
+  customer: { id: string; name: string; tier: 'premium' | 'standard' };
+  items: Array<{ sku: string; qty: number; price: number }>;
+  tags: string[];
+  metadata: { source: 'web' | 'mobile'; retries: number };
+}
+
+interface LogEvent {
+  timestamp: number;
+  message: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  dimensions: { service: string; region: string; host: string };
+  details: { requestId: string; durationMs: number; nested: { trace: { span: number; parent: number } } };
+}
+
+interface Product {
+  id: number;
+  category: { id: number; name: string };
+  variants: Array<{ sku: string; price: number; attributes: { color: string; size: string } }>;
+  reviews: { count: number; avg: number };
+}
+
+function buildOrders(count: number): { orders: Order[] } {
+  const statuses: Order['status'][] = ['shipped', 'pending', 'cancelled'];
+  return {
+    orders: Array.from({ length: count }, (_, i) => ({
+      id: `ord-${i}`,
+      status: statuses[i % statuses.length],
+      total: 10 + ((i * 17) % 500),
+      customer: {
+        id: `cust-${i % 200}`,
+        name: `Customer ${i % 200}`,
+        tier: i % 5 === 0 ? 'premium' : 'standard',
+      },
+      items: Array.from({ length: 3 + (i % 4) }, (_, j) => ({
+        sku: `SKU-${i}-${j}`,
+        qty: 1 + j,
+        price: 5 + ((i + j) * 3) % 80,
+      })),
+      tags: [`cat-${i % 8}`, `region-${i % 4}`],
+      metadata: { source: i % 2 === 0 ? 'web' : 'mobile', retries: i % 3 },
     })),
   };
-  const compiledExpr = jmespath.compile('items[?price > `500`].name');
+}
+
+function buildLogEvents(count: number): { events: LogEvent[] } {
+  const levels: LogEvent['level'][] = ['INFO', 'WARN', 'ERROR'];
+  const services = ['api', 'worker', 'ingest', 'billing'];
+  const regions = ['us-east-1', 'eu-west-1', 'ap-southeast-1'];
+  return {
+    events: Array.from({ length: count }, (_, i) => ({
+      timestamp: 1_700_000_000 + i,
+      message: `Processed request ${i} with status ${i % 7}`,
+      level: levels[i % levels.length],
+      dimensions: {
+        service: services[i % services.length],
+        region: regions[i % regions.length],
+        host: `host-${i % 24}`,
+      },
+      details: {
+        requestId: `req-${i}`,
+        durationMs: 5 + (i % 120),
+        nested: { trace: { span: i % 50, parent: i % 10 } },
+      },
+    })),
+  };
+}
+
+function buildCatalog(count: number): { products: Product[] } {
+  const colors = ['red', 'blue', 'green', 'black'];
+  const sizes = ['S', 'M', 'L', 'XL'];
+  return {
+    products: Array.from({ length: count }, (_, i) => ({
+      id: i,
+      category: { id: i % 12, name: `Category ${i % 12}` },
+      variants: Array.from({ length: 2 + (i % 3) }, (_, v) => ({
+        sku: `P${i}-V${v}`,
+        price: 9.99 + v + (i % 7),
+        attributes: { color: colors[v % colors.length], size: sizes[i % sizes.length] },
+      })),
+      reviews: { count: i % 20, avg: 3 + (i % 3) * 0.5 },
+    })),
+  };
+}
+
+function buildInfraPayload() {
+  return {
+    resources: {
+      clusters: Array.from({ length: 12 }, (_, c) => ({
+        name: `cluster-${c}`,
+        region: ['us-east-1', 'eu-west-1'][c % 2],
+        nodes: Array.from({ length: 8 }, (_, n) => ({
+          id: `node-${c}-${n}`,
+          pods: Array.from({ length: 6 }, (_, p) => ({
+            name: `pod-${c}-${n}-${p}`,
+            labels: { app: `app-${p % 4}`, env: ['prod', 'staging'][c % 2] },
+            status: { phase: ['Running', 'Pending', 'Failed'][p % 3], restarts: p % 3 },
+          })),
+        })),
+      })),
+    },
+    meta: { version: 3, generatedAt: '2026-06-19T00:00:00Z' },
+  };
+}
+
+function compile(expression: string): CompiledExpr {
+  return jmespath.compile(expression);
+}
+
+function runCompiled(compiled: CompiledExpr, data: unknown): () => void {
+  return () => {
+    jmespath.TreeInterpreter.search(compiled, data as never);
+  };
+}
+
+function getBenchmarkFns(): BenchmarkFn[] {
+  const ordersSmall = buildOrders(100);
+  const ordersLarge = buildOrders(1000);
+  const logsLarge = buildLogEvents(1000);
+  const catalog = buildCatalog(500);
+  const infra = buildInfraPayload();
+
+  const compiled = {
+    fieldAccess: compile('orders[0].customer.name'),
+    filterShipped: compile("orders[?status == 'shipped' && total > `100`].{id: id, customer: customer.name, total: total}"),
+    filterWithContains: compile("orders[?contains(tags, 'cat-3') && metadata.retries < `2`].id"),
+    lineItemsProjection: compile('orders[*].items[*].{sku: sku, lineTotal: price * qty}'),
+    logErrors: compile("events[?level == 'ERROR' && details.durationMs > `50`].{service: dimensions.service, span: details.nested.trace.span}"),
+    logServices: compile('events[*].dimensions.{service: service, region: region}'),
+    logSlice: compile('events[10:100:2].message'),
+    catalogTopRated: compile('products[?reviews.avg > `4`].variants[*].{sku: sku, price: price}'),
+    catalogSorted: compile('sort_by(products, &reviews.avg)[0:10].{id: id, avg: reviews.avg}'),
+    infraRunningPods: compile("resources.clusters[*].nodes[*].pods[?status.phase == 'Running'].name"),
+    infraDeepField: compile('resources.clusters[0].nodes[0].pods[0].labels.app'),
+    lengthOrders: compile('length(orders)'),
+    maxShippedTotal: compile("max(orders[?status == 'shipped'].total)"),
+    sortByTotal: compile('sort_by(orders, &total)[-1].id'),
+    mapCustomerNames: compile('map(&customer.name, orders[0:20])'),
+    pipeChain: compile("orders[?status == 'shipped'] | [0:5].{id: id, total: total}"),
+    flattenProjection: compile('orders[*].items[*].sku'),
+    andFilter: compile("orders[?status == 'pending' && customer.tier == 'premium' && total > `50`].id"),
+    multiselectHash: compile('orders[0].{id: id, status: status, itemCount: length(items), topSku: items[0].sku}'),
+    nestedNumeric: compile('resources.clusters[*].nodes[*].pods[*].status.restarts'),
+    sliceItems: compile('orders[10:30]'),
+    filterLarge: compile('orders[?total > `250` && contains(tags, `"region-2"`)].customer.name'),
+    complexPipeline: compile(
+      "orders[?status == 'shipped' && total > `100`] | sort_by(@, &total) | [-3:].{id: id, customer: customer.name, total: total}",
+    ),
+  };
+
+  const pipelineExprs = {
+    filterShipped: "orders[?status == 'shipped' && total > `100`].customer.name",
+    complex: "orders[?status == 'shipped' && total > `100`] | sort_by(@, &total) | [-1].id",
+    infraPods: "resources.clusters[*].nodes[*].pods[?status.phase == 'Running'].name",
+  };
 
   return [
+    // Parser: compile-only, representative expression shapes
     { name: 'Parser#single_expr', fn: () => jmespath.compile('foo') },
     { name: 'Parser#single_subexpr', fn: () => jmespath.compile('foo.bar') },
     {
@@ -124,31 +270,69 @@ function getBenchmarkFns(): BenchmarkFn[] {
           '[49][48][47][46][45][44][43][42][41][40][39][38][37][36][35][34][33][32][31][30][29][28][27][26][25][24][23][22][21][20][19][18][17][16][15][14][13][12][11][10][9][8][7][6][5][4][3][2][1][0]',
         ),
     },
-    { name: 'Parser#basic_list_projection', fn: () => jmespath.compile('foo[*].bar') },
-    { name: 'Lexer#common_identifiers', fn: () => jmespath.compile('foo.bar.baz.qux.foo.bar.baz.qux') },
-    { name: 'Lexer#mixed_tokens', fn: () => jmespath.compile('items[?price > `100`].name') },
-    { name: 'Lexer#function_calls', fn: () => jmespath.compile('sort_by(items, &price).name') },
-    { name: 'Eval#simple_field', fn: () => jmespath.search(simpleData, 'foo.bar') },
-    { name: 'Eval#array_projection', fn: () => jmespath.search(arrayData, 'items[*].name') },
-    { name: 'Eval#filter_projection', fn: () => jmespath.search(arrayData, 'items[?price > `500`].name') },
-    { name: 'Eval#function_call', fn: () => jmespath.search(arrayData, 'length(items)') },
-    { name: 'Eval#nested_access', fn: () => jmespath.search(nestedData, 'level1.level2.level3.level4.value') },
-    { name: 'Eval#slice_operation', fn: () => jmespath.search(arrayData, 'items[10:20]') },
-    { name: 'Runtime#length_function', fn: () => jmespath.search(arrayData, 'length(items)') },
-    { name: 'Runtime#max_function', fn: () => jmespath.search(arrayData, 'max(items[*].price)') },
-    { name: 'Runtime#sort_by_function', fn: () => jmespath.search(arrayData, 'sort_by(items, &price)') },
-    { name: 'Runtime#map_function', fn: () => jmespath.search(arrayData, 'map(&name, items)') },
-    { name: 'Runtime#contains_function', fn: () => jmespath.search(arrayData, 'contains(items[*].name, `"item50"`)') },
-    { name: 'Memory#simple_tokenization', fn: () => jmespath.tokenize('foo.bar') },
+    { name: 'Parser#basic_list_projection', fn: () => jmespath.compile('orders[*].customer.name') },
+    { name: 'Parser#filter_multiselect', fn: () => jmespath.compile(pipelineExprs.filterShipped) },
+    { name: 'Parser#pipe_sort', fn: () => jmespath.compile(pipelineExprs.complex) },
+    { name: 'Parser#nested_wildcard_filter', fn: () => jmespath.compile(pipelineExprs.infraPods) },
+
+    // Lexer: tokenize representative expressions without parsing/evaluating
+    { name: 'Lexer#common_identifiers', fn: () => jmespath.tokenize('foo.bar.baz.qux.foo.bar.baz.qux') },
     {
-      name: 'Memory#complex_tokenization',
-      fn: () => jmespath.tokenize('items[?price > `500` && contains(tags, `"category1"`)].name'),
+      name: 'Lexer#mixed_tokens',
+      fn: () => jmespath.tokenize("orders[?status == 'shipped' && total > `100`].customer.name"),
     },
-    { name: 'Memory#full_pipeline_complex', fn: () => jmespath.search(arrayDataLarge, 'items[?price > `500`].name') },
+    { name: 'Lexer#function_calls', fn: () => jmespath.tokenize('sort_by(orders, &total) | [-1].id') },
     {
-      name: 'Memory#precompiled_eval',
-      fn: () => jmespath.TreeInterpreter.search(compiledExpr, arrayDataLarge),
+      name: 'Lexer#complex_filter',
+      fn: () =>
+        jmespath.tokenize(
+          "events[?level == 'ERROR' && details.durationMs > `50`].{service: dimensions.service, span: details.nested.trace.span}",
+        ),
     },
+
+    // Pipeline: full search() path (parse + eval) for a few real-world shapes
+    { name: 'Pipeline#filter_shipped_orders', fn: () => jmespath.search(ordersLarge, pipelineExprs.filterShipped) },
+    { name: 'Pipeline#pipe_sort_tail', fn: () => jmespath.search(ordersLarge, pipelineExprs.complex) },
+    { name: 'Pipeline#infra_running_pods', fn: () => jmespath.search(infra, pipelineExprs.infraPods) },
+
+    // Eval: precompiled expressions, TreeInterpreter.search only
+    { name: 'Eval#field_access', fn: runCompiled(compiled.fieldAccess, ordersSmall) },
+    { name: 'Eval#filter_projection', fn: runCompiled(compiled.filterShipped, ordersLarge) },
+    { name: 'Eval#filter_with_contains', fn: runCompiled(compiled.filterWithContains, ordersLarge) },
+    { name: 'Eval#double_projection', fn: runCompiled(compiled.lineItemsProjection, ordersLarge) },
+    { name: 'Eval#multiselect_hash', fn: runCompiled(compiled.multiselectHash, ordersSmall) },
+    { name: 'Eval#pipe_chain', fn: runCompiled(compiled.pipeChain, ordersLarge) },
+    { name: 'Eval#flatten_projection', fn: runCompiled(compiled.flattenProjection, ordersLarge) },
+    { name: 'Eval#and_filter', fn: runCompiled(compiled.andFilter, ordersLarge) },
+    { name: 'Eval#slice', fn: runCompiled(compiled.sliceItems, ordersLarge) },
+    { name: 'Eval#log_filter_projection', fn: runCompiled(compiled.logErrors, logsLarge) },
+    { name: 'Eval#log_service_projection', fn: runCompiled(compiled.logServices, logsLarge) },
+    { name: 'Eval#log_slice', fn: runCompiled(compiled.logSlice, logsLarge) },
+    { name: 'Eval#catalog_filter_projection', fn: runCompiled(compiled.catalogTopRated, catalog) },
+    { name: 'Eval#infra_nested_wildcard', fn: runCompiled(compiled.infraRunningPods, infra) },
+    { name: 'Eval#infra_deep_field', fn: runCompiled(compiled.infraDeepField, infra) },
+    { name: 'Eval#nested_numeric_projection', fn: runCompiled(compiled.nestedNumeric, infra) },
+
+    // Runtime: precompiled builtin-heavy expressions on realistic payloads
+    { name: 'Runtime#length', fn: runCompiled(compiled.lengthOrders, ordersLarge) },
+    { name: 'Runtime#max', fn: runCompiled(compiled.maxShippedTotal, ordersLarge) },
+    { name: 'Runtime#sort_by', fn: runCompiled(compiled.sortByTotal, ordersLarge) },
+    { name: 'Runtime#map', fn: runCompiled(compiled.mapCustomerNames, ordersLarge) },
+    { name: 'Runtime#sort_by_slice', fn: runCompiled(compiled.catalogSorted, catalog) },
+    { name: 'Runtime#complex_pipe', fn: runCompiled(compiled.complexPipeline, ordersLarge) },
+
+    // Memory: steady-state tokenization and precompiled eval on larger payloads
+    { name: 'Memory#tokenize_simple', fn: () => jmespath.tokenize('orders[0].customer.name') },
+    {
+      name: 'Memory#tokenize_complex',
+      fn: () =>
+        jmespath.tokenize(
+          "orders[?status == 'shipped' && total > `100` && contains(tags, 'cat-3')].customer.name",
+        ),
+    },
+    { name: 'Memory#precompiled_filter_large', fn: runCompiled(compiled.filterLarge, ordersLarge) },
+    { name: 'Memory#precompiled_multiselect', fn: runCompiled(compiled.multiselectHash, ordersLarge) },
+    { name: 'Memory#precompiled_infra_wildcard', fn: runCompiled(compiled.infraRunningPods, infra) },
   ];
 }
 
