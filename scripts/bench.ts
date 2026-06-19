@@ -1,7 +1,14 @@
-#!/usr/bin/env -S node --expose-gc --import tsx
+#!/usr/bin/env -S node --expose-gc
 import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import jmespath from '../src/index';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_MODULE_PATH = resolve(__dirname, '../dist/index.esm.js');
+
+let jmespath: Awaited<typeof import('../src/index')>['default'];
+
 
 interface TimingStats {
   iterations: number;
@@ -49,7 +56,7 @@ const MEMORY_WARMUP = 1000;
 const MEMORY_ITERATIONS = 10_000;
 
 function parseCli() {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       o: { type: 'string' },
       w: { type: 'string', default: String(DEFAULT_WARMUP_ITERATIONS) },
@@ -58,7 +65,7 @@ function parseCli() {
       compare: { type: 'string' },
       d: { type: 'string' },
     },
-    allowPositionals: false,
+    allowPositionals: true,
   });
 
   const warmupIterations = Number(values.w);
@@ -76,7 +83,12 @@ function parseCli() {
     timingIterations,
     compareFile: values.c ?? values.compare,
     htmlFile: values.d,
+    modulePath: positionals[0] ? resolve(positionals[0]) : DEFAULT_MODULE_PATH,
   };
+}
+
+async function loadJmespathModule(modulePath: string) {
+  return (await import(pathToFileURL(modulePath).href)).default;
 }
 
 function getBenchmarkFns(): BenchmarkFn[] {
@@ -560,9 +572,11 @@ function generateHtml(report: BenchReport, compareReport?: BenchReport): string 
 </html>`;
 }
 
-function main() {
+async function main() {
   try {
     const options = parseCli();
+    console.log(`Loading module: ${options.modulePath}`);
+    jmespath = await loadJmespathModule(options.modulePath);
     const report = runBenchmarks(options.warmupIterations, options.timingIterations);
 
     if (options.outputFile) {
